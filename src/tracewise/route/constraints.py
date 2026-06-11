@@ -154,6 +154,33 @@ def patch_kicad_pro(pro_path: str | Path, classes: list[NetClass]) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def read_project_rules(pro_path: str | Path) -> dict:
+    """Project-level minimums from .kicad_pro design settings (mm). Empty when
+    absent. Fair-scoring exposed why this matters: classes emitted below the
+    project's own minimums route copper the project's DRC then condemns."""
+    try:
+        data = json.loads(Path(pro_path).read_text(encoding="utf-8"))
+        rules = data.get("board", {}).get("design_settings", {}).get("rules", {})
+        out = {}
+        if "min_clearance" in rules:
+            out["min_clearance_mm"] = float(rules["min_clearance"])
+        if "min_track_width" in rules:
+            out["min_track_mm"] = float(rules["min_track_width"])
+        return out
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def clamp_to_project(classes: list[NetClass], project_rules: dict) -> list[NetClass]:
+    """Raise class clearances/widths to at least the project's own minimums."""
+    floor_clr = project_rules.get("min_clearance_mm", 0.0)
+    floor_trk = project_rules.get("min_track_mm", 0.0)
+    for c in classes:
+        c.clearance_mm = max(c.clearance_mm, floor_clr)
+        c.track_mm = max(c.track_mm, floor_trk)
+    return classes
+
+
 def worth_constraining(classes: list[NetClass]) -> bool:
     """The first ablation's lesson: on boards with no constraint-sensitive nets
     (no diff pairs, no recognizable buses — just a bare Power class), emitted
@@ -183,6 +210,7 @@ def generate(
     pro = next(iter(project_dir.glob("*.kicad_pro")), None)
     dru_path = None
     if pro is not None:
+        clamp_to_project(classes, read_project_rules(pro))
         patch_kicad_pro(pro, classes)
         dru_path = pro.with_suffix(".kicad_dru")
         dru_path.write_text(emit_dru(classes, spec), encoding="utf-8")

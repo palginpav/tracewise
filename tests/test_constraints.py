@@ -128,3 +128,28 @@ def test_conditional_emits_with_diff_pairs(tmp_path):
     summary = generate(NETLIST, BoardSpec(), tmp_path)  # has USB_DP/DM + /SDA
     assert "skipped" not in summary or not summary.get("skipped")
     assert (tmp_path / "x.kicad_dru").exists()
+
+
+def test_clamp_to_project_minimums(tmp_path):
+    from tracewise.route.constraints import clamp_to_project, read_project_rules
+    pro = tmp_path / "x.kicad_pro"
+    pro.write_text(json.dumps({
+        "board": {"design_settings": {"rules": {"min_clearance": 0.25, "min_track_width": 0.3}}},
+        "net_settings": {"classes": []},
+    }))
+    rules = read_project_rules(pro)
+    assert rules == {"min_clearance_mm": 0.25, "min_track_mm": 0.3}
+    classes = classify(NETLIST, BoardSpec())  # defaults 0.15/0.2
+    clamp_to_project(classes, rules)
+    assert all(c.clearance_mm >= 0.25 and c.track_mm >= 0.3 for c in classes)
+    # generate() applies the clamp end-to-end
+    summary = generate(NETLIST, BoardSpec(), tmp_path)
+    dru = (tmp_path / "x.kicad_dru").read_text()
+    assert "(min 0.25mm)" in dru and summary["classes"]
+
+
+def test_read_project_rules_absent(tmp_path):
+    from tracewise.route.constraints import read_project_rules
+    pro = tmp_path / "x.kicad_pro"
+    pro.write_text(json.dumps({"net_settings": {}}))
+    assert read_project_rules(pro) == {}

@@ -45,12 +45,24 @@ def run_mode(project: Path, mode: str) -> dict:
     sch = next((s for s in work.glob("*.kicad_sch") if s.stem == board.stem), None) or next(
         work.glob("*.kicad_sch"), None
     )
+    pro = next(work.glob("*.kicad_pro"), None)
+    pro_original = pro.read_text(encoding="utf-8") if pro else None
+
     strip_routing(board)
     if mode == "constrained" and sch is not None:
         nl = parse_netlist(export_netlist(sch))
         spec = BoardSpec.for_project(work)
         generate(nl, spec, work)
     route_board(board, workdir=work)
+
+    # FAIR SCORING: constraints may influence routing, but both arms must be
+    # judged against the identical rule set — restore the original project
+    # rules and drop TraceWise's .kicad_dru before the scoring DRC.
+    if pro is not None and pro_original is not None:
+        pro.write_text(pro_original, encoding="utf-8")
+    for dru in work.glob("*.kicad_dru"):
+        dru.unlink()
+
     drc = drc_summary(run_drc(board))
     metrics = board_metrics(board)
     return {**drc, **metrics}
