@@ -154,10 +154,32 @@ def patch_kicad_pro(pro_path: str | Path, classes: list[NetClass]) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def generate(nl: Netlist, spec: BoardSpec, project_dir: str | Path) -> dict:
-    """Classify, write .kicad_dru, patch .kicad_pro. Returns a summary."""
+def worth_constraining(classes: list[NetClass]) -> bool:
+    """The first ablation's lesson: on boards with no constraint-sensitive nets
+    (no diff pairs, no recognizable buses — just a bare Power class), emitted
+    constraints add nothing and wider power tracks can *cost* DRC errors in
+    tight legacy geometry. Emit only when the class set carries routing-
+    meaningful structure beyond Power alone."""
+    names = {c.name for c in classes}
+    return bool(names - {"Power"})
+
+
+def generate(
+    nl: Netlist, spec: BoardSpec, project_dir: str | Path, conditional: bool = True
+) -> dict:
+    """Classify, write .kicad_dru, patch .kicad_pro. Returns a summary.
+
+    With ``conditional`` (default), emission is skipped entirely when the
+    board has nothing constraint-sensitive (see :func:`worth_constraining`)."""
     project_dir = Path(project_dir)
     classes = classify(nl, spec)
+    if conditional and not worth_constraining(classes):
+        return {
+            "classes": {c.name: len(c.nets) for c in classes},
+            "skipped": "no constraint-sensitive nets (use --force to emit anyway)",
+            "kicad_pro": None,
+            "kicad_dru": None,
+        }
     pro = next(iter(project_dir.glob("*.kicad_pro")), None)
     dru_path = None
     if pro is not None:

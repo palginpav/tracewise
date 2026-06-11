@@ -50,6 +50,7 @@ def review(
 @app.command()
 def constrain(
     schematic: Path = typer.Argument(..., help="Path to .kicad_sch"),
+    force: bool = typer.Option(False, "--force", help="Emit even without sensitive nets"),
 ) -> None:
     """Generate net classes + design rules from the netlist and tracewise.yaml."""
     from tracewise.boardspec import BoardSpec
@@ -58,10 +59,13 @@ def constrain(
 
     nl = parse_netlist(export_netlist(schematic))
     spec = BoardSpec.for_project(schematic.parent)
-    summary = generate(nl, spec, schematic.parent)
+    summary = generate(nl, spec, schematic.parent, conditional=not force)
     typer.echo(f"classes: {summary['classes']}")
-    typer.echo(f"patched: {summary['kicad_pro']}")
-    typer.echo(f"rules:   {summary['kicad_dru']}")
+    if summary.get("skipped"):
+        typer.echo(f"skipped: {summary['skipped']}")
+    else:
+        typer.echo(f"patched: {summary['kicad_pro']}")
+        typer.echo(f"rules:   {summary['kicad_dru']}")
 
 
 @app.command()

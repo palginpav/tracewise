@@ -103,3 +103,28 @@ def test_generate_writes_files(tmp_path):
     summary = generate(NETLIST, BoardSpec(), tmp_path)
     assert summary["classes"]["Power"] == 2
     assert (tmp_path / "demo.kicad_dru").exists()
+
+
+def test_conditional_skips_power_only(tmp_path):
+    import json as _json
+
+    from tracewise.route.constraints import worth_constraining
+    power_only = parse_netlist("""(export (version "E")
+      (components (comp (ref "U1") (value "X") (libsource (lib "L") (part "X"))))
+      (nets (net (code "1") (name "VCC")
+        (node (ref "U1") (pin "1") (pintype "power_in")))))""")
+    assert not worth_constraining(classify(power_only, BoardSpec()))
+    pro = tmp_path / "x.kicad_pro"
+    pro.write_text(_json.dumps({"net_settings": {"classes": []}}))
+    summary = generate(power_only, BoardSpec(), tmp_path)
+    assert summary["skipped"] and summary["kicad_dru"] is None
+    assert not (tmp_path / "x.kicad_dru").exists()
+
+
+def test_conditional_emits_with_diff_pairs(tmp_path):
+    import json as _json
+    pro = tmp_path / "x.kicad_pro"
+    pro.write_text(_json.dumps({"net_settings": {"classes": []}}))
+    summary = generate(NETLIST, BoardSpec(), tmp_path)  # has USB_DP/DM + /SDA
+    assert "skipped" not in summary or not summary.get("skipped")
+    assert (tmp_path / "x.kicad_dru").exists()
