@@ -1,0 +1,14 @@
+# fetched test data: KiCad demo projects are GPL — fetched, never committed
+/data/demo-projects/
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+.ruff_cache/
+# local
+.env
+*.log
+runs/
