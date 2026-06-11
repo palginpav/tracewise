@@ -129,7 +129,7 @@ def auto(
     for h in r["iterations"]:
         typer.echo(f"  iter {h['iter']}: routed {h['routed']}, "
                    f"unconnected {h['unconnected']}, errors {h['errors']}, "
-                   f"boosted {h['boosted']}")
+                   f"boosted {h['boosted']}, moved {h.get('moved', 0)}")
     typer.echo(f"best: {r['best_unconnected']} unconnected, {r['best_errors']} errors")
     raise typer.Exit(0 if r["best_unconnected"] == 0 and r["best_errors"] == 0 else 1)
 

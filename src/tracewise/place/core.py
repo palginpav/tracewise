@@ -33,9 +33,11 @@ class PlaceProblem:
     board: tuple[float, float, float, float]  # x1,y1,x2,y2
     # decoupling pairs: (cap_index, target_fp_index, target_offset[2])
     decap: list[tuple[int, int, torch.Tensor]]
+    net_w: torch.Tensor | None = None  # optional per-net HPWL weights
 
 
-def build_problem(data: dict, lock_refs: set[str] | None = None) -> PlaceProblem:
+def build_problem(data: dict, lock_refs: set[str] | None = None,
+                  net_weights: dict[str, float] | None = None) -> PlaceProblem:
     lock_refs = lock_refs or set()
     fps = data["footprints"]
     refs = [f["ref"] for f in fps]
@@ -52,12 +54,14 @@ def build_problem(data: dict, lock_refs: set[str] | None = None) -> PlaceProblem
             if p["net"]:
                 by_net.setdefault(p["net"], []).append((i, p["dx"], p["dy"]))
     nets = []
-    for pins in by_net.values():
+    weights = []
+    for net_name, pins in by_net.items():
         if len(pins) < 2:
             continue
         ii = torch.tensor([p[0] for p in pins], dtype=torch.long)
         off = torch.tensor([[p[1], p[2]] for p in pins], dtype=torch.float64)
         nets.append((ii, off))
+        weights.append((net_weights or {}).get(net_name, 1.0))
 
     # decoupling: capacitor refs (C*) sharing a non-GND net with another part's
     # power-ish pad — attract the cap to that pad
@@ -77,16 +81,20 @@ def build_problem(data: dict, lock_refs: set[str] | None = None) -> PlaceProblem
         board=(data["board"]["x1"], data["board"]["y1"],
                data["board"]["x2"], data["board"]["y2"]),
         decap=decap,
+        net_w=torch.tensor(weights, dtype=torch.float64) if net_weights else None,
     )
 
 
-def smooth_hpwl(pos: torch.Tensor, nets, tau: float = 1.0) -> torch.Tensor:
+def smooth_hpwl(pos: torch.Tensor, nets, tau: float = 1.0,
+                net_w: torch.Tensor | None = None) -> torch.Tensor:
     total = pos.new_zeros(())
-    for ii, off in nets:
+    for k, (ii, off) in enumerate(nets):
         pins = pos[ii] + off
+        w = float(net_w[k]) if net_w is not None else 1.0
         for d in (0, 1):
             v = pins[:, d]
-            total = total + tau * torch.logsumexp(v / tau, 0) + tau * torch.logsumexp(-v / tau, 0)
+            total = total + w * (tau * torch.logsumexp(v / tau, 0)
+                                 + tau * torch.logsumexp(-v / tau, 0))
     return total
 
 
@@ -197,7 +205,7 @@ def optimize(
         tau = 2.0 * (1 - t) + 0.1  # anneal smooth-max toward true max
         w_ov = w_overlap_final * t  # let parts pass through each other early
         cost = (
-            smooth_hpwl(pos, prob.nets, tau=tau)
+            smooth_hpwl(pos, prob.nets, tau=tau, net_w=prob.net_w)
             + w_ov * overlap_penalty(pos + prob.coff, prob.size)
             + 10.0 * boundary_penalty(pos + prob.coff, prob.size, prob.board)
             + w_decap * decap_penalty(pos, prob.decap)

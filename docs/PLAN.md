@@ -105,9 +105,12 @@ better placement may move the routability needle more cheaply.
   pristine each round. First measurement (mitayi, 5 iters): routed nets 35→40 but pad-level
   unconnected churned 63→64–69 → rollback kept 63. FINDING: ordering feedback alone is
   zero-sum at this density — corridors gained by boosted nets are lost by others. The
-  binding constraint is PLACEMENT (operator's hypothesis, now measured). Arm 2 next:
-  re-place components of persistently-failing nets between rounds (weighted-HPWL placer
-  nudge with everything else locked) — true place-route co-optimization.
+  binding constraint is PLACEMENT (operator's hypothesis, now measured). Arm 2 v1
+  (re-place all failed-net components, weighted HPWL) measured NEGATIVE: moved 28-30
+  parts/round incl. the MCU → 86-96 unconn, 270+ errors (overlap chaos); rollback held 63.
+  Arm 2 v2 requirements from the wreckage: never move high-pin parts, displacement trust
+  region (~2mm), one stubborn net at a time, and the placer itself needs congestion
+  awareness before it can be trusted to nudge.
 
 ## v0.4 — Fixer
 
