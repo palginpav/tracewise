@@ -73,7 +73,11 @@ better placement may move the routability needle more cheaply.
   crossable, clearance halos passable within ~1.2mm of endpoints at +2.0/cell penalty):
   unconnected 97→93 — modest; the castellated holdouts fail differently (clamped edge-pad
   centers likely landing inside neighbor hard copper — per-pad geometry investigation next).
-  Then R4 ablation.
+  INVESTIGATION RESULT: disc pad model was the wall — castellated pads (1.6×3.2mm rects)
+  modeled as r=1.6mm discs overlapped each other at 2.54mm pitch = phantom copper sealing the
+  edge. Pads are now true rectangles (hard = exact rect, halo = inflated): **93→72 unconnected,
+  remaining failures are inner pads.** Visual render check (kicad-cli pcb render + F.Cu PDF):
+  routing fans out properly, pour refills clean. Clearance uptick (26→68) to tune. Then R4.
 
 ## v0.4 — Fixer
 

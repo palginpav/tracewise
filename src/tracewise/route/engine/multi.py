@@ -29,8 +29,8 @@ class Net:
     pads: list[tuple[int, int, int]]  # (layer, iy, ix)
     halfwidth_cells: int = 1  # track halfwidth + clearance, in cells
     via_halfwidth_cells: int = 5  # via radius + clearance, in cells
-    # own pad discs to carve free while routing: (layer, x_mm, y_mm, r_inflated, r_pad)
-    carve: list[tuple[int, float, float, float, float]] = field(default_factory=list)
+    # own pad rects to carve free while routing: (layer, x1, y1, x2, y2, inflate_mm)
+    carve: list[tuple] = field(default_factory=list)
 
 
 @dataclass
@@ -73,8 +73,8 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> 
     if len(net.pads) < 2:
         nr.ok = True  # nothing to connect
         return nr
-    for layer, x, y, r, rp in net.carve:  # own pads must not wall the net in
-        grid.block_disc(layer, x, y, r, delta=-1, hard_radius_mm=rp)
+    for layer, x1, y1, x2, y2, inf in net.carve:  # own pads must not wall the net in
+        grid.block_pad(layer, x1, y1, x2, y2, inflate_mm=inf, delta=-1)
     tree: set[tuple[int, int, int]] = {net.pads[0]}
     for pad in net.pads[1:]:
         if pad in tree:
@@ -84,8 +84,8 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> 
             nr.reason = f"pad {pad}: {res.reason}"
             nr.cells.clear()
             nr.paths.clear()
-            for layer, x, y, r, rp in net.carve:
-                grid.block_disc(layer, x, y, r, delta=1, hard_radius_mm=rp)
+            for layer, x1, y1, x2, y2, inf in net.carve:
+                grid.block_pad(layer, x1, y1, x2, y2, inflate_mm=inf, delta=1)
             return nr  # all-or-nothing: no stubs
         nr.paths.append(res.path)
         vias = {(a[1], a[2]) for a, b in zip(res.path, res.path[1:], strict=False)
@@ -95,8 +95,8 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> 
         # stack a second via on the same hole (dangling + hole-to-hole)
         tree.update(n for n in res.path if (n[1], n[2]) not in vias)
     nr.cells = tree - set(net.pads)  # pads stay as the pad obstacles they are
-    for layer, x, y, r, rp in net.carve:
-        grid.block_disc(layer, x, y, r, delta=1, hard_radius_mm=rp)
+    for layer, x1, y1, x2, y2, inf in net.carve:
+        grid.block_pad(layer, x1, y1, x2, y2, inflate_mm=inf, delta=1)
     nr.ok = True
     return nr
 

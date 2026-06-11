@@ -32,12 +32,12 @@ for fp in b.GetFootprints():
         ls = p.GetLayerSet()
         front = ls.Contains(pcbnew.F_Cu)
         back = ls.Contains(pcbnew.B_Cu)
-        sz = p.GetSize(pcbnew.F_Cu) if front else p.GetSize(pcbnew.B_Cu)
+        bb = p.GetBoundingBox()
         pads.append({{
             "net": p.GetNetname(),
             "x": p.GetPosition().x / IU, "y": p.GetPosition().y / IU,
             "front": bool(front), "back": bool(back),
-            "r": max(sz.x, sz.y) / 2 / IU,
+            "hw": bb.GetWidth() / 2 / IU, "hh": bb.GetHeight() / 2 / IU,
         }})
 edges = b.GetBoardEdgesBoundingBox()
 print("TWJSON" + json.dumps({{
@@ -64,17 +64,16 @@ def build_problem(
                 height_mm=bd["y2"] - bd["y1"], pitch=pitch, layers=2)
     inflate = track_mm / 2 + clearance_mm
     by_net: dict[str, list[tuple[int, int, int]]] = {}
-    carve: dict[str, list[tuple[int, float, float, float, float]]] = {}
+    carve: dict[str, list[tuple]] = {}
     for p in data["pads"]:
         layers = ([0] if p["front"] else []) + ([1] if p["back"] else [])
+        rect = (p["x"] - p["hw"], p["y"] - p["hh"], p["x"] + p["hw"], p["y"] + p["hh"])
         for layer in layers:
             if p["net"]:
                 cell = grid.clamp_cell(*grid.to_cell(p["x"], p["y"]))
                 by_net.setdefault(p["net"], []).append((layer, *cell))
-                carve.setdefault(p["net"], []).append(
-                    (layer, p["x"], p["y"], p["r"] + inflate, p["r"]))
-            grid.block_disc(layer, p["x"], p["y"], p["r"] + inflate,
-                            hard_radius_mm=p["r"])
+                carve.setdefault(p["net"], []).append((layer, *rect, inflate))
+            grid.block_pad(layer, *rect, inflate_mm=inflate)
     half_cells = max(1, math.ceil((track_mm / 2 + clearance_mm) / pitch))
     nets = [Net(name, pads, halfwidth_cells=half_cells, carve=carve.get(name, []))
             for name, pads in by_net.items() if len(pads) >= 2]

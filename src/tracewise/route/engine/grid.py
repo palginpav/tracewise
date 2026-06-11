@@ -70,6 +70,17 @@ class Grid:
         if hard_radius_mm is not None:
             self._disc(self.hard, layer, x, y, hard_radius_mm, delta)
 
+    def block_pad(self, layer: int, x1: float, y1: float, x2: float, y2: float,
+                  inflate_mm: float, delta: int = 1) -> None:
+        """A rectangular pad: hard copper over the exact rect, clearance halo
+        over the inflated rect. Rectangles, not discs — disc-rounding tall pads
+        (castellated edges) builds phantom copper walls that seal the board."""
+        for arr, inf in ((self.cells, inflate_mm), (self.hard, 0.0)):
+            cy1, cx1 = self.to_cell(min(x1, x2) - inf, min(y1, y2) - inf)
+            cy2, cx2 = self.to_cell(max(x1, x2) + inf, max(y1, y2) + inf)
+            arr[layer, max(0, cy1):min(self.ny, cy2 + 1),
+                max(0, cx1):min(self.nx, cx2 + 1)] += delta
+
     def block_rect(self, layer: int, x1: float, y1: float, x2: float, y2: float,
                    inflate_mm: float = 0.0) -> None:
         cy1, cx1 = self.to_cell(min(x1, x2) - inflate_mm, min(y1, y2) - inflate_mm)
