@@ -9,7 +9,7 @@ measured results per release.
 - [x] kiutils round-trip fidelity — **NO-GO** (0/9 clean round-trips on v9 AND v10: board files crash or corrupt, schematics silently drop 8–17% of tokens). Decision: own lossless s-expression layer (docs/spike-0-kiutils.md)
 - [x] Demo-file fetcher (scripts/spike_kiutils.py; official KiCad demos, fetched not committed)
 - [ ] kicad-cli availability strategy for CI (docker image) and for dev machines without KiCad
-- [ ] Lossless s-expression editor core (parse→CST→surgical edit→byte-faithful write) + the spike harness as its regression suite
+- [x] Lossless s-expression editor core (src/tracewise/sexpr.py): CST with verbatim tokens + trivia; byte-identical round-trip proven on all fetched KiCad v9/v10 demo files; surgical insert/set/remove with inferred indentation
 - **Exit:** ✅ kiutils no-go decided; sexpr core is the v0.1 prerequisite
 
 ## v0.1 — Reviewer
