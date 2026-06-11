@@ -127,3 +127,16 @@ def test_center_offset_keeps_box_on_board():
     # box spans [x, x+25] — right edge must stay on the 51mm board
     assert x + 25.0 <= 51.0 + 0.5
     assert x >= -0.5
+
+
+def test_congestion_penalty_prefers_spread():
+    from tracewise.place.core import congestion_penalty
+    board = (0.0, 0.0, 40.0, 40.0)
+    off = torch.zeros(2, 2, dtype=torch.float64)
+    nets = [(torch.tensor([0, 1]), off), (torch.tensor([2, 3]), off)]
+    clumped = torch.tensor([[20.0, 20.0], [20.5, 20.0], [20.0, 20.5], [20.5, 20.5]],
+                           dtype=torch.float64)
+    spread = torch.tensor([[5.0, 5.0], [35.0, 5.0], [5.0, 35.0], [35.0, 35.0]],
+                          dtype=torch.float64)
+    assert float(congestion_penalty(clumped, nets, board)) > \
+        float(congestion_penalty(spread, nets, board))

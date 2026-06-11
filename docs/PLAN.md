@@ -110,7 +110,11 @@ better placement may move the routability needle more cheaply.
   parts/round incl. the MCU → 86-96 unconn, 270+ errors (overlap chaos); rollback held 63.
   Arm 2 v2 requirements from the wreckage: never move high-pin parts, displacement trust
   region (~2mm), one stubborn net at a time, and the placer itself needs congestion
-  awareness before it can be trusted to nudge.
+  awareness before it can be trusted to nudge. Congestion term added (differentiable
+  pin-density splat, annealed) — measured NO routability gain (101 unconn, same as
+  HPWL-only; overlap 217 vs human 130). CONCLUSION across 3 placement experiments:
+  residual overlap is the gate — overlapping courtyards block routing corridors directly.
+  Dependency chain revised: scanline/Tetris legalizer FIRST, then congestion, then arm 2.
 
 ## v0.4 — Fixer
 

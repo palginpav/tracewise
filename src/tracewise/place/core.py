@@ -131,6 +131,31 @@ def boundary_penalty(pos: torch.Tensor, size: torch.Tensor, board) -> torch.Tens
     return p.sum()
 
 
+def congestion_penalty(pos: torch.Tensor, nets, board, bins: int = 24,
+                       sigma: float = 1.5, cap_factor: float = 1.6) -> torch.Tensor:
+    """Differentiable routing-demand proxy: pin density. Every pin splats a
+    Gaussian onto a coarse bin grid; density above capacity is penalized
+    quadratically. Pins are where wires must terminate — crowded pins mean
+    corridors that cannot exist, which no router fixes afterward (measured:
+    the v0.3 placer's HPWL-only layouts routed worse than human ones)."""
+    pins = []
+    for ii, off in nets:
+        pins.append(pos[ii] + off)
+    if not pins:
+        return pos.new_zeros(())
+    pts = torch.cat(pins, dim=0)  # [P,2]
+    x1, y1, x2, y2 = board
+    gx = torch.linspace(x1, x2, bins, dtype=pos.dtype)
+    gy = torch.linspace(y1, y2, bins, dtype=pos.dtype)
+    cx, cy = torch.meshgrid(gx, gy, indexing="ij")
+    centers = torch.stack([cx.reshape(-1), cy.reshape(-1)], dim=1)  # [B²,2]
+    d2 = ((pts[:, None, :] - centers[None, :, :]) ** 2).sum(-1)  # [P,B²]
+    dens = torch.exp(-d2 / (2 * sigma * sigma)).sum(0)  # [B²]
+    cap = dens.sum() / (bins * bins) * cap_factor
+    over = torch.relu(dens - cap)
+    return (over * over).sum()
+
+
 def decap_penalty(pos: torch.Tensor, decap) -> torch.Tensor:
     if not decap:
         return pos.new_zeros(())
@@ -192,6 +217,7 @@ def optimize(
     lr: float = 0.5,
     w_overlap_final: float = 4.0,
     w_decap: float = 0.02,
+    w_congestion: float = 0.3,
     seed: int = 0,
 ) -> dict:
     torch.manual_seed(seed)
@@ -209,6 +235,7 @@ def optimize(
             + w_ov * overlap_penalty(pos + prob.coff, prob.size)
             + 10.0 * boundary_penalty(pos + prob.coff, prob.size, prob.board)
             + w_decap * decap_penalty(pos, prob.decap)
+            + (w_congestion * t) * congestion_penalty(pos, prob.nets, prob.board)
         )
         cost.backward()
         opt.step()
