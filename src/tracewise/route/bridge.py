@@ -274,8 +274,11 @@ def route_board(board: str | Path, workdir: str | Path | None = None) -> dict:
     """DSN → Freerouting → SES → zones → DRC. Returns a summary dict."""
     board = Path(board).resolve()
     work = Path(workdir) if workdir else board.parent
-    dsn = work / f"{board.stem}.dsn"
-    ses = work / f"{board.stem}.ses"
+    # Freerouting's launcher splits unquoted arguments on spaces — keep the
+    # intermediate filenames space-free regardless of the board's name.
+    stem = board.stem.replace(" ", "_")
+    dsn = work / f"{stem}.dsn"
+    ses = work / f"{stem}.ses"
     export_dsn(board, dsn)
     run_freerouting(dsn, ses)
     import_ses(board, ses)
