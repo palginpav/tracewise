@@ -95,8 +95,11 @@ better placement may move the routability needle more cheaply.
   its via). Fixed: vias at every layer transition of the unfiltered run list, suppressed at
   through-pads (their barrel already spans layers), deduped per net. **Result: dangling 0,
   co-located 0, unconnected 63 (best; FR=89). Engine now beats Freerouting on completion by
-  ~30% on the design-scope board.** Remaining: 44 clearance (fine-pitch shaves), 30
-  via-near-hole spacing — both named, both tunable.
+  ~30% on the design-scope board.** Width-necking landed: A* tags halo-traversing nodes,
+  emit necks those segments to project-min width (no-op where track==min, pays where
+  headroom exists); escape-penalty sweep 2/4/6 → knee at 4.0 (63 unconn + clearance 44→34).
+  Engine config frozen for this round: 82 err / 63 unconn / 0 dangling on mitayi (FR: 4/89/0).
+  Remaining: via-near-hole spacing (~24), fine-pitch residual shaves. R4 re-run next.
 
 ## v0.4 — Fixer
 

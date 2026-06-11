@@ -39,6 +39,7 @@ class NetRoute:
     paths: list[list[tuple[int, int, int]]] = field(default_factory=list)
     cells: set[tuple[int, int, int]] = field(default_factory=set)
     via_sites: set[tuple[int, int]] = field(default_factory=set)  # (iy, ix)
+    escape_cells: set[tuple[int, int, int]] = field(default_factory=set)
     ok: bool = False
     reason: str = ""
 
@@ -88,6 +89,7 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> 
                 grid.block_pad(layer, x1, y1, x2, y2, inflate_mm=inf, delta=1)
             return nr  # all-or-nothing: no stubs
         nr.paths.append(res.path)
+        nr.escape_cells |= res.escaped
         vias = {(a[1], a[2]) for a, b in zip(res.path, res.path[1:], strict=False)
                 if a[0] != b[0]}
         nr.via_sites.update(vias)

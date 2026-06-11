@@ -39,6 +39,7 @@ class RouteResult:
     path: list[tuple[int, int, int]]  # [(layer, iy, ix)]
     cost: float
     reason: str = ""
+    escaped: frozenset = frozenset()  # nodes that traversed clearance halos
 
 
 def route(
@@ -48,7 +49,7 @@ def route(
     via_cost: float = 10.0,
     max_expansions: int = 2_000_000,
     escape: int = 0,
-    escape_penalty: float = 2.0,
+    escape_penalty: float = 4.0,
 ) -> RouteResult:
     """A* from start to the nearest of `goals`. Cells in `goals` need not be
     free (pads are blocked for other nets but are this net's targets)."""
@@ -72,6 +73,7 @@ def route(
     open_q: list[tuple[float, float, tuple[int, int, int]]] = [(h(start), 0.0, start)]
     came: dict[tuple[int, int, int], tuple[int, int, int] | None] = {start: None}
     gscore: dict[tuple[int, int, int], float] = {start: 0.0}
+    shaved: set[tuple[int, int, int]] = set()
     expansions = 0
 
     while open_q:
@@ -83,7 +85,8 @@ def route(
                 path.append(cur)
                 cur = came[cur]
             path.reverse()
-            return RouteResult(True, path, g)
+            return RouteResult(True, path, g,
+                               escaped=frozenset(n for n in path if n in shaved))
         if g > gscore.get(node, math.inf):
             continue
         expansions += 1
@@ -131,6 +134,10 @@ def route(
             if ng < gscore.get(nxt, math.inf):
                 gscore[nxt] = ng
                 came[nxt] = node
+                if c > SQRT2:  # carried an escape penalty
+                    shaved.add(nxt)
+                else:
+                    shaved.discard(nxt)
                 heapq.heappush(open_q, (ng + h(nxt), ng, nxt))
 
     return RouteResult(False, [], 0.0, "no path")

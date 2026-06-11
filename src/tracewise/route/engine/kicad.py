@@ -85,7 +85,7 @@ def build_problem(
 def emit_routes(
     board: str | Path, grid: Grid, results: dict[str, NetRoute],
     track_mm: float = 0.2, via_mm: float = 0.6, via_drill_mm: float = 0.3,
-    anchors: dict | None = None,
+    anchors: dict | None = None, neck_mm: float | None = None,
 ) -> dict:
     """Write routed nets into the board file via the sexpr editor."""
     root = parse_file(board)
@@ -126,10 +126,17 @@ def emit_routes(
                 for a, b in zip(run, run[1:], strict=False):
                     xa, ya = snap.get(a) or grid.to_world(a[1], a[2])
                     xb, yb = snap.get(b) or grid.to_world(b[1], b[2])
+                    # width-necking: segments that traversed clearance halos
+                    # emit at the necked width (never below project minimum) —
+                    # what a human does at fine-pitch escapes
+                    w = track_mm
+                    shaved = a in nr.escape_cells or b in nr.escape_cells
+                    if neck_mm and neck_mm < track_mm and shaved:
+                        w = neck_mm
                     root.insert(node("segment",
                         node("start", f"{xa:.3f}", f"{ya:.3f}"),
                         node("end", f"{xb:.3f}", f"{yb:.3f}"),
-                        node("width", str(track_mm)),
+                        node("width", str(w)),
                         node("layer", atom(layer, quote=True)),
                         net_atom(name)))
                     segs += 1
@@ -163,7 +170,8 @@ def project_geometry(board: str | Path) -> dict:
     completion on dense boards — measured, not theoretical."""
     import json as _json
 
-    geo = {"track_mm": 0.2, "clearance_mm": 0.2, "via_mm": 0.6, "via_drill_mm": 0.3}
+    geo = {"track_mm": 0.2, "clearance_mm": 0.2, "via_mm": 0.6, "via_drill_mm": 0.3,
+           "min_track_mm": 0.1}
     pro = Path(board).with_suffix(".kicad_pro")
     if pro.exists():
         try:
@@ -171,6 +179,7 @@ def project_geometry(board: str | Path) -> dict:
             rules = data.get("board", {}).get("design_settings", {}).get("rules", {})
             if rules.get("min_track_width"):
                 geo["track_mm"] = max(float(rules["min_track_width"]), 0.1)
+                geo["min_track_mm"] = geo["track_mm"]
             if rules.get("min_clearance"):
                 geo["clearance_mm"] = max(float(rules["min_clearance"]), 0.1)
             for c in data.get("net_settings", {}).get("classes", []):
@@ -215,7 +224,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     results = route_all(grid, nets, escape=12)  # ~1.2mm endpoint escape
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
-                          anchors=anchors)
+                          anchors=anchors, neck_mm=geo["min_track_mm"])
     refill_zones(board)
     ok = sum(1 for r in results.values() if r.ok)
     return {
