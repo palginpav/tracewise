@@ -65,8 +65,11 @@ def _bbox_size(net: Net) -> int:
     return (max(ys) - min(ys)) + (max(xs) - min(xs))
 
 
-def order_nets(nets: list[Net]) -> list[Net]:
-    return sorted(nets, key=lambda n: (0 if POWER.match(n.name) else 1, _bbox_size(n)))
+def order_nets(nets: list[Net], priority: dict[str, int] | None = None) -> list[Net]:
+    """Power first, then failed-before nets (negotiated priority), then short."""
+    pr = priority or {}
+    return sorted(nets, key=lambda n: (-pr.get(n.name, 0),
+                                       0 if POWER.match(n.name) else 1, _bbox_size(n)))
 
 
 def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> NetRoute:
@@ -119,13 +122,14 @@ def _nearest_victim(failed: Net, routed: list[NetRoute]) -> NetRoute | None:
 
 
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
-              ripup_factor: int = 8, escape: int = 0) -> dict[str, NetRoute]:
+              ripup_factor: int = 8, escape: int = 0,
+              priority: dict[str, int] | None = None) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute."""
     results: dict[str, NetRoute] = {}
     routed: list[NetRoute] = []
     budget = ripup_factor * max(len(nets), 1)
 
-    queue = order_nets(nets)
+    queue = order_nets(nets, priority)
     attempts: dict[str, int] = {}
     while queue and budget > 0:
         net = queue.pop(0)

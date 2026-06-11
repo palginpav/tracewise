@@ -117,5 +117,22 @@ def place(
         typer.echo(f"applied {len(result['positions'])} positions to {board}")
 
 
+@app.command()
+def auto(
+    board: Path = typer.Argument(..., help="Path to .kicad_pcb (will be routed in place)"),
+    iters: int = typer.Option(5, "--iters"),
+) -> None:
+    """Iterative route refinement: failed nets feed back as priority."""
+    from tracewise.route.engine.auto import auto_route
+
+    r = auto_route(board, max_iters=iters)
+    for h in r["iterations"]:
+        typer.echo(f"  iter {h['iter']}: routed {h['routed']}, "
+                   f"unconnected {h['unconnected']}, errors {h['errors']}, "
+                   f"boosted {h['boosted']}")
+    typer.echo(f"best: {r['best_unconnected']} unconnected, {r['best_errors']} errors")
+    raise typer.Exit(0 if r["best_unconnected"] == 0 and r["best_errors"] == 0 else 1)
+
+
 if __name__ == "__main__":
     app()

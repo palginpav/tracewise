@@ -100,6 +100,14 @@ better placement may move the routability needle more cheaply.
   headroom exists); escape-penalty sweep 2/4/6 → knee at 4.0 (63 unconn + clearance 44→34).
   Engine config frozen for this round: 82 err / 63 unconn / 0 dangling on mitayi (FR: 4/89/0).
   Remaining: via-near-hole spacing (~24), fine-pitch residual shaves. R4 re-run next.
+- [~] **Refinement loop (`tracewise auto`)** toward the 0/0 goal: iterate route rounds,
+  failed nets gain ordering priority + escalating rip-up, keep-best-with-rollback from
+  pristine each round. First measurement (mitayi, 5 iters): routed nets 35→40 but pad-level
+  unconnected churned 63→64–69 → rollback kept 63. FINDING: ordering feedback alone is
+  zero-sum at this density — corridors gained by boosted nets are lost by others. The
+  binding constraint is PLACEMENT (operator's hypothesis, now measured). Arm 2 next:
+  re-place components of persistently-failing nets between rounds (weighted-HPWL placer
+  nudge with everything else locked) — true place-route co-optimization.
 
 ## v0.4 — Fixer
 
