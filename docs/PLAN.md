@@ -58,7 +58,14 @@ better placement may move the routability needle more cheaply.
   Freerouting's 89 (3.7× better completion)**. Open: via geometry in grid (vias modeled as
   points → ~800 hole/short/mask violations), dangling-via emit bug (68), zones unmodeled
   (→ 510 clearance hits in pours — that's R3 by design)
-- [ ] R2.1: via discs in grid + dangling-via fix → R3 zones → R4 three-board ablation
+- [x] R2.1: via discs (all layers, full radius), via-barrel exclusion from goal trees,
+  **counting occupancy** (block +1/unblock −1; boolean rip-up was erasing overlapped
+  obstacles → route-through-pad shorts AND artificially easy routing), project-true
+  geometry (track/clearance/via from .kicad_pro). Shorts 200→2, hole_to_hole 199→2,
+  tracks_crossing 44→0. Honest completion reset: 107 unconnected on mitayi — the earlier
+  24 was partly the unmark bug routing through erased obstacles. Remaining wall:
+  castellated edge pads + unmodeled pours (R3) + escape routing.
+- [ ] R3: zones/pours in grid (per-zone clearance) + finer pitch option + pad escape → R4 ablation
 
 ## v0.4 — Fixer
 

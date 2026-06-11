@@ -101,7 +101,7 @@ def emit_routes(
         if net_atom(name) is None:
             continue
         for path in nr.paths:
-            runs = simplify(path)
+            runs = [r for r in simplify(path) if len(r) >= 2]  # no degenerate runs
             for i, run in enumerate(runs):
                 layer = layer_name[run[0][0]]
                 for a, b in zip(run, run[1:], strict=False):
@@ -127,12 +127,45 @@ def emit_routes(
     return {"segments": segs, "vias": vias}
 
 
+def project_geometry(board: str | Path) -> dict:
+    """Track/clearance/via geometry from the project's own rules (fallbacks
+    are conservative). Routing with fatter-than-project geometry costs real
+    completion on dense boards — measured, not theoretical."""
+    import json as _json
+
+    geo = {"track_mm": 0.2, "clearance_mm": 0.2, "via_mm": 0.6, "via_drill_mm": 0.3}
+    pro = Path(board).with_suffix(".kicad_pro")
+    if pro.exists():
+        try:
+            data = _json.loads(pro.read_text(encoding="utf-8"))
+            rules = data.get("board", {}).get("design_settings", {}).get("rules", {})
+            if rules.get("min_track_width"):
+                geo["track_mm"] = max(float(rules["min_track_width"]), 0.1)
+            if rules.get("min_clearance"):
+                geo["clearance_mm"] = max(float(rules["min_clearance"]), 0.1)
+            for c in data.get("net_settings", {}).get("classes", []):
+                if c.get("name") == "Default":
+                    if c.get("via_diameter"):
+                        geo["via_mm"] = float(c["via_diameter"])
+                    if c.get("via_drill"):
+                        geo["via_drill_mm"] = float(c["via_drill"])
+        except (ValueError, OSError):
+            pass
+    return geo
+
+
 def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     """End-to-end: extract -> grid -> route_all -> emit. Returns a summary."""
     data = extract_pads(board)
-    grid, nets = build_problem(data, pitch=pitch)
+    geo = project_geometry(board)
+    grid, nets = build_problem(data, pitch=pitch,
+                               track_mm=geo["track_mm"], clearance_mm=geo["clearance_mm"])
+    via_half = max(1, math.ceil((geo["via_mm"] / 2 + geo["clearance_mm"]) / pitch))
+    for n in nets:
+        n.via_halfwidth_cells = via_half
     results = route_all(grid, nets)
-    emitted = emit_routes(board, grid, results)
+    emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
+                          via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"])
     ok = sum(1 for r in results.values() if r.ok)
     return {
         "nets": len(nets), "routed": ok, "failed": len(nets) - ok,

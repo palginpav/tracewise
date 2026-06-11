@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 
 from tracewise.route.engine.astar import RouteResult, route
-from tracewise.route.engine.grid import FREE, Grid
+from tracewise.route.engine.grid import Grid
 
 POWER = re.compile(r"^\+?(VCC|VDD|VBUS|VBAT|VSYS|GND|VSS|[0-9]+V[0-9]*)$", re.IGNORECASE)
 
@@ -28,6 +28,7 @@ class Net:
     name: str
     pads: list[tuple[int, int, int]]  # (layer, iy, ix)
     halfwidth_cells: int = 1  # track halfwidth + clearance, in cells
+    via_halfwidth_cells: int = 5  # via radius + clearance, in cells
     # own pad discs to carve free while this net routes: (layer, x_mm, y_mm, r_mm)
     carve: list[tuple[int, float, float, float]] = field(default_factory=list)
 
@@ -37,16 +38,22 @@ class NetRoute:
     net: Net
     paths: list[list[tuple[int, int, int]]] = field(default_factory=list)
     cells: set[tuple[int, int, int]] = field(default_factory=set)
+    via_sites: set[tuple[int, int]] = field(default_factory=set)  # (iy, ix)
     ok: bool = False
     reason: str = ""
 
 
-def _mark(grid: Grid, nr: NetRoute, value: int) -> None:
+def _mark(grid: Grid, nr: NetRoute, delta: int) -> None:
     r = nr.net.halfwidth_cells
     for layer, iy, ix in nr.cells:
         y1, y2 = max(0, iy - r), min(grid.ny, iy + r + 1)
         x1, x2 = max(0, ix - r), min(grid.nx, ix + r + 1)
-        grid.cells[layer, y1:y2, x1:x2] = value
+        grid.cells[layer, y1:y2, x1:x2] += delta
+    rv = nr.net.via_halfwidth_cells  # vias block every layer with their full disc
+    for iy, ix in nr.via_sites:
+        y1, y2 = max(0, iy - rv), min(grid.ny, iy + rv + 1)
+        x1, x2 = max(0, ix - rv), min(grid.nx, ix + rv + 1)
+        grid.cells[:, y1:y2, x1:x2] += delta
 
 
 def _bbox_size(net: Net) -> int:
@@ -65,7 +72,7 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0) -> NetRoute:
         nr.ok = True  # nothing to connect
         return nr
     for layer, x, y, r in net.carve:  # own pads must not wall the net in
-        grid.block_disc(layer, x, y, r, value=FREE)
+        grid.block_disc(layer, x, y, r, delta=-1)
     tree: set[tuple[int, int, int]] = {net.pads[0]}
     for pad in net.pads[1:]:
         if pad in tree:
@@ -76,13 +83,18 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0) -> NetRoute:
             nr.cells.clear()
             nr.paths.clear()
             for layer, x, y, r in net.carve:
-                grid.block_disc(layer, x, y, r)
+                grid.block_disc(layer, x, y, r, delta=1)
             return nr  # all-or-nothing: no stubs
         nr.paths.append(res.path)
-        tree.update(res.path)
+        vias = {(a[1], a[2]) for a, b in zip(res.path, res.path[1:], strict=False)
+                if a[0] != b[0]}
+        nr.via_sites.update(vias)
+        # via barrels never enter the goal tree: branching into them would
+        # stack a second via on the same hole (dangling + hole-to-hole)
+        tree.update(n for n in res.path if (n[1], n[2]) not in vias)
     nr.cells = tree - set(net.pads)  # pads stay as the pad obstacles they are
     for layer, x, y, r in net.carve:
-        grid.block_disc(layer, x, y, r)
+        grid.block_disc(layer, x, y, r, delta=1)
     nr.ok = True
     return nr
 
@@ -124,7 +136,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         if attempts[net.name] <= 10:
             victim = _nearest_victim(net, routed)
             if victim is not None:
-                _mark(grid, victim, FREE)
+                _mark(grid, victim, -1)
                 routed.remove(victim)
                 results.pop(victim.net.name, None)
                 queue.insert(0, victim.net)  # victim re-routes after us
