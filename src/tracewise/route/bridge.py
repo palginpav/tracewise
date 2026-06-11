@@ -136,6 +136,32 @@ def run_freerouting(dsn: str | Path, ses_out: str | Path, timeout_s: int = 1800)
     return ses_out
 
 
+def strip_routing(board: str | Path) -> None:
+    """Remove all tracks, arcs and vias — produce the unrouted starting point."""
+    board = Path(board).resolve()
+    _run_pcbnew_script(
+        "import pcbnew; "
+        f"b = pcbnew.LoadBoard({str(board)!r}); "
+        "[b.Remove(t) for t in list(b.GetTracks())]; "
+        f"pcbnew.SaveBoard({str(board)!r}, b)"
+    )
+
+
+def board_metrics(board: str | Path) -> dict:
+    """Track/via counts and total routed length (mm) via pcbnew."""
+    board = Path(board).resolve()
+    out = _run_pcbnew_script(
+        "import pcbnew, json; "
+        f"b = pcbnew.LoadBoard({str(board)!r}); "
+        "ts = list(b.GetTracks()); "
+        "segs = [t for t in ts if t.GetClass() in ('PCB_TRACK','PCB_ARC')]; "
+        "vias = [t for t in ts if t.GetClass()=='PCB_VIA']; "
+        "print(json.dumps({'segments': len(segs), 'vias': len(vias), "
+        "'length_mm': round(sum(t.GetLength() for t in segs)/1e6, 1)}))"
+    )
+    return json.loads(out.strip().splitlines()[-1])
+
+
 # --- DRC ------------------------------------------------------------------------
 
 

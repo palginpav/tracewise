@@ -27,7 +27,7 @@ measured results per release.
 - [x] Constraint generation: deterministic classification (power by name+pintype, diff pairs by suffix matching incl. +/-, slow buses) → net classes patched into .kicad_pro + .kicad_dru rules; LLM refinement pass deferred to a later iteration
 - [x] Freerouting bridge: DSN export + SES import via pcbnew inside KiCad's runtime (flatpak-aware), Freerouting 2.2.4 JAR auto-fetched/cached, zone refill on import
 - [x] DRC scoring via kicad-cli JSON (summary: violations/severity/unconnected); iterate loop = ablation work
-- [ ] Ablation: constrained vs naked Freerouting on the benchmark suite — the headline table
+- [~] Ablation harness shipped (strip → route both arms → DRC/metrics table). First result (n=1, pic_programmer): NULL — old THT board has no constraint-sensitive nets; two extra DRC errors from wider power tracks. Analysis in docs/route-ablation.md; next: constraint-sensitive benchmark boards + conditional constraint emission
 - **Exit:** measurable routing-quality delta from generated constraints
 
 ## v0.3 — Placer
