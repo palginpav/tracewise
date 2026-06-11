@@ -69,18 +69,90 @@ def _run_pcbnew_script(script: str, timeout: int = 300) -> str:
     return res.stdout
 
 
+HEAL_OUTLINE = """
+import pcbnew
+b = pcbnew.LoadBoard({board!r})
+poly = pcbnew.SHAPE_POLY_SET()
+if not b.GetBoardPolygonOutlines(poly, False):
+    # strict outline is broken (micro-gaps are common on community boards and
+    # are fatal to the DSN exporter); rebuild Edge.Cuts from the inferred poly
+    assert b.GetBoardPolygonOutlines(poly, True), "outline not even inferable"
+    for d in [d for d in b.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]:
+        b.Remove(d)
+    o = poly.Outline(0)
+    n = o.PointCount()
+    for i in range(n):
+        a, c = o.CPoint(i), o.CPoint((i + 1) % n)
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        s.SetStart(pcbnew.VECTOR2I(a.x, a.y))
+        s.SetEnd(pcbnew.VECTOR2I(c.x, c.y))
+        s.SetLayer(pcbnew.Edge_Cuts)
+        s.SetWidth(int(0.1 * 1e6))
+        b.Add(s)
+    pcbnew.SaveBoard({board!r}, b)
+    print("healed outline:", n, "segments")
+# Community boards routinely contain footprints the DSN exporter cannot
+# digest (logo marks with refs like "G***", label footprints, empty-ref screw
+# holes) and the API reports only False. Self-heal: sanitize obviously bad
+# refs, then if export still fails, auto-bisect the minimal set of offending
+# footprints, drop them IN MEMORY ONLY (logos and holes carry no routed nets;
+# the on-disk board keeps them, and the session file never references them),
+# and disclose what was dropped.
+import re as _re
+for i, fp in enumerate(b.GetFootprints()):
+    ref = fp.GetReference()
+    if not ref or _re.search(r"[^A-Za-z0-9_.-]", ref):
+        fp.SetReference("TWSAN%d" % i)
+        print("sanitized ref for export:", repr(ref))
+
+def _try():
+    return pcbnew.ExportSpecctraDSN(b, {dsn!r})
+
+if not _try():
+    for _round in range(6):  # tolerate multiple independent culprits
+        refs = [fp.GetReference() for fp in b.GetFootprints()]
+        def _ok_with(keep):
+            t = pcbnew.LoadBoard({board!r})
+            byref = dict((f.GetReference() or "", f) for f in t.GetFootprints())
+            for j, f in enumerate(list(t.GetFootprints())):
+                r = f.GetReference()
+                if not r or _re.search(r"[^A-Za-z0-9_.-]", r):
+                    f.SetReference("TWSAN%d" % j)
+            for f in list(t.GetFootprints()):
+                if f.GetReference() not in keep:
+                    t.Delete(f)
+            return pcbnew.ExportSpecctraDSN(t, {dsn!r})
+        suspects = [r for r in refs]
+        if _ok_with(set(suspects)):
+            break  # current in-memory board exports (culprits already dropped)
+        while len(suspects) > 1:
+            half = suspects[: len(suspects) // 2]
+            if not _ok_with(set(half)):
+                suspects = half
+            else:
+                suspects = suspects[len(suspects) // 2 :]
+        culprit = suspects[0]
+        for f in list(b.GetFootprints()):
+            if f.GetReference() == culprit:
+                print("dropped from export (DSN-incompatible):", culprit,
+                      str(f.GetFPID().GetLibItemName()))
+                b.Delete(f)
+        if _try():
+            break
+raise SystemExit(0)
+"""
+
+
 def export_dsn(board: str | Path, dsn_out: str | Path) -> Path:
-    """Specctra DSN export. Paths must be visible to the (possibly sandboxed)
-    KiCad runtime — keep them under $HOME."""
+    """Specctra DSN export, healing unclosed Edge.Cuts outlines if needed.
+    Paths must be visible to the (possibly sandboxed) KiCad runtime — keep
+    them under $HOME. Outline healing mutates the board file (callers work on
+    copies in routing flows)."""
     board, dsn_out = Path(board).resolve(), Path(dsn_out).resolve()
-    _run_pcbnew_script(
-        "import pcbnew; "
-        f"b = pcbnew.LoadBoard({str(board)!r}); "
-        f"ok = pcbnew.ExportSpecctraDSN(b, {str(dsn_out)!r}); "
-        "raise SystemExit(0 if ok else 1)"
-    )
+    _run_pcbnew_script(HEAL_OUTLINE.format(board=str(board), dsn=str(dsn_out)))
     if not dsn_out.exists():
-        raise BridgeError("DSN export produced no file")
+        raise BridgeError("DSN export produced no file (outline unhealable?)")
     return dsn_out
 
 

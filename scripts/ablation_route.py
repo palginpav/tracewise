@@ -41,7 +41,10 @@ def prepare(src_project: Path, mode: str) -> Path:
 def run_mode(project: Path, mode: str) -> dict:
     work = prepare(project, mode)
     board = next(work.glob("*.kicad_pcb"))
-    sch = next(work.glob("*.kicad_sch"), None)
+    # root sheet = the one named like the board (hierarchical projects have sub-sheets)
+    sch = next((s for s in work.glob("*.kicad_sch") if s.stem == board.stem), None) or next(
+        work.glob("*.kicad_sch"), None
+    )
     strip_routing(board)
     if mode == "constrained" and sch is not None:
         nl = parse_netlist(export_netlist(sch))
