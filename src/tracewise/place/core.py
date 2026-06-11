@@ -34,6 +34,8 @@ class PlaceProblem:
     # decoupling pairs: (cap_index, target_fp_index, target_offset[2])
     decap: list[tuple[int, int, torch.Tensor]]
     net_w: torch.Tensor | None = None  # optional per-net HPWL weights
+    # per-part pins: idx -> list of (net_index, dx, dy) for rotation scoring
+    part_pins: dict | None = None
 
 
 def build_problem(data: dict, lock_refs: set[str] | None = None,
@@ -55,13 +57,17 @@ def build_problem(data: dict, lock_refs: set[str] | None = None,
                 by_net.setdefault(p["net"], []).append((i, p["dx"], p["dy"]))
     nets = []
     weights = []
+    part_pins: dict[int, list] = {}
     for net_name, pins in by_net.items():
         if len(pins) < 2:
             continue
+        k = len(nets)
         ii = torch.tensor([p[0] for p in pins], dtype=torch.long)
         off = torch.tensor([[p[1], p[2]] for p in pins], dtype=torch.float64)
         nets.append((ii, off))
         weights.append((net_weights or {}).get(net_name, 1.0))
+        for i, dx, dy in pins:
+            part_pins.setdefault(i, []).append((k, dx, dy))
 
     # decoupling: capacitor refs (C*) sharing a non-GND net with another part's
     # power-ish pad — attract the cap to that pad
@@ -82,6 +88,7 @@ def build_problem(data: dict, lock_refs: set[str] | None = None,
                data["board"]["x2"], data["board"]["y2"]),
         decap=decap,
         net_w=torch.tensor(weights, dtype=torch.float64) if net_weights else None,
+        part_pins=part_pins,
     )
 
 
@@ -311,10 +318,31 @@ def optimize(
     # rotation candidates: origin ≈ box center (passives) — orientation swap
     # keeps the box model exact without offset-rotation bookkeeping
     rotatable = None
-    if rotate:  # v1 box-fit rotation measured NEGATIVE (scrambles pad axes);
-        # off by default until rotation scoring includes rotated-offset HPWL
+    if rotate and prob.part_pins:
+        # v2: offer rotation only where it is wirelength-neutral or better,
+        # scored with properly rotated pad offsets (+90 in KiCad: (dx,dy) ->
+        # (dy,-dx), verified empirically against pcbnew). v1 (fit-only) was
+        # measured negative: it scrambled pad axes.
         rotatable = (prob.coff.abs().amax(dim=1)
                      < 0.3 * prob.size.amin(dim=1)) & prob.movable
+        for i in range(len(prob.refs)):
+            if not bool(rotatable[i]):
+                continue
+            delta = 0.0
+            for k, dx, dy in prob.part_pins.get(i, []):
+                ii, off = prob.nets[k]
+                others = [(int(j), float(off[m, 0]), float(off[m, 1]))
+                          for m, j in enumerate(ii.tolist()) if j != i]
+                if not others:
+                    continue
+                ax = sum(float(final[j, 0]) + odx for j, odx, _ in others) / len(others)
+                ay = sum(float(final[j, 1]) + ody for j, _, ody in others) / len(others)
+                px, py = float(final[i, 0]), float(final[i, 1])
+                d_now = ((px + dx - ax) ** 2 + (py + dy - ay) ** 2) ** 0.5
+                d_rot = ((px + dy - ax) ** 2 + (py - dx - ay) ** 2) ** 0.5
+                delta += d_rot - d_now
+            if delta > 1.0:  # rotation would cost wirelength — veto
+                rotatable[i] = False
     centers, rotated = legalize_tetris(centers, prob.size, prob.movable,
                                        prob.board, rotatable=rotatable)
     final = centers - prob.coff

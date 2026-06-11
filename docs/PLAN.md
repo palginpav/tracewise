@@ -121,8 +121,13 @@ better placement may move the routability needle more cheaply.
   (placer treats orientation as fixed; humans rotate to pack). Gap to human: 26 nets.
   Rotation v1 (box-fit-only 90° in tetris, center-anchored parts): NEGATIVE — 97 unconn
   vs 89; rotating on fit alone scrambles pad axes and invalidates optimized wirelength.
-  Gated off by default (optimize(rotate=True) to enable). v2: score orientations with
-  rotated-offset HPWL inside the choice, or 4-way discrete rotation in the gradient phase.
+  Gated off by default (optimize(rotate=True) to enable). v2 (HPWL-veto with verified
+  pad transform) measured IDENTICAL (97): every rotation is locally wirelength-neutral —
+  the damage is ESCAPE DIRECTION (rotated pads face different corridors), invisible to any
+  local model. Conclusion: rotation needs routability-aware scoring = router-in-the-loop
+  (route trial per orientation), parked. Placer ladder stands at 89; remaining levers:
+  arm-2 trust-region nudges, and accepting the human-placement use case (TraceWise routes
+  EXISTING placements — its strongest mode anyway).
 
 ## v0.4 — Fixer
 
