@@ -16,9 +16,9 @@ measured results per release.
 
 - [x] Netlist extraction (kicad-cli → our own sexpr parser) + compressed representation — measured on a real project: 57k → 1.6k tokens (2.8%)
 - [ ] Datasheet RAG corpus for benchmark boards (manifest + downloader pattern)
-- [ ] LLM review pass: findings schema (severity, evidence, datasheet citation, confidence)
+- [x] Findings schema + hybrid review: deterministic rules (i2c-pullup, power-decoupling, floating-input) + LLM pass with hallucination guard (evidence must exist in netlist), confidence capped below rules, dedupe
 - [ ] Seeded-error benchmark suite + precision/recall scorecard (incl. clean-schematic FP rate)
-- [ ] CLI: `tracewise review <project>` → markdown/JSON report
+- [x] CLI: `python -m tracewise review <sch>` → markdown/JSON; exit code = error count; rules-only fallback when Ollama absent
 - **Exit:** measured precision/recall on the seeded benchmark; useful report on a real board
 
 ## v0.2 — Constraints + Router bridge

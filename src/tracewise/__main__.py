@@ -1,0 +1,51 @@
+"""TraceWise CLI.
+
+    tracewise review <schematic.kicad_sch> [--llm/--no-llm] [--model qwen3:4b]
+                                           [--json out.json] [--out report.md]
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import typer
+
+app = typer.Typer(add_completion=False)
+
+
+@app.callback()
+def main() -> None:
+    """TraceWise: AI-assisted place & route for KiCad."""
+
+
+@app.command()
+def review(
+    schematic: Path = typer.Argument(..., help="Path to .kicad_sch"),
+    llm: bool = typer.Option(True, "--llm/--no-llm", help="Include the LLM pass"),
+    model: str = typer.Option("qwen3:4b", "--model"),
+    out: Path | None = typer.Option(None, "--out", help="Write markdown report here"),
+    json_out: Path | None = typer.Option(None, "--json", help="Write JSON report here"),
+) -> None:
+    from tracewise.llm import OllamaClient
+    from tracewise.review.engine import review_schematic
+
+    client = OllamaClient(model=model) if llm else None
+    if client is not None and not client.available():
+        typer.echo("note: Ollama not reachable — running rules only", err=True)
+        client = None
+    report = review_schematic(schematic, client=client)
+    md = report.to_markdown()
+    if out:
+        out.write_text(md, encoding="utf-8")
+        typer.echo(f"wrote {out}")
+    else:
+        typer.echo(md)
+    if json_out:
+        json_out.write_text(report.to_json(), encoding="utf-8")
+        typer.echo(f"wrote {json_out}")
+    c = report.counts()
+    raise typer.Exit(1 if c["error"] else 0)
+
+
+if __name__ == "__main__":
+    app()
