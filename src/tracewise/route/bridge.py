@@ -156,6 +156,32 @@ def export_dsn(board: str | Path, dsn_out: str | Path) -> Path:
     return dsn_out
 
 
+def filter_ses(ses: str | Path) -> int:
+    """Remove placement entries for export-sanitized refs (TWSANn) from a
+    Specctra session so import matches the on-disk board, whose original
+    references were never changed. Sessions are s-expressions — edited
+    losslessly with our own core. Returns the number of entries removed."""
+    from tracewise.sexpr import parse_file, write_file
+
+    ses = Path(ses)
+    root = parse_file(ses)
+    removed = 0
+    for comp in root.find_all("component"):
+        for place in list(comp.nodes("place")):
+            ref = place.arg(1)
+            if ref and ref.startswith("TWSAN"):
+                comp.remove(place)
+                removed += 1
+    if removed:
+        # drop components left with no placements
+        for parent in root.find_all("placement"):
+            for comp in list(parent.nodes("component")):
+                if not comp.nodes("place"):
+                    parent.remove(comp)
+        write_file(root, ses)
+    return removed
+
+
 def import_ses(board: str | Path, ses: str | Path) -> None:
     """Import a Specctra session back into the board and refill zones."""
     board, ses = Path(board).resolve(), Path(ses).resolve()
@@ -281,6 +307,7 @@ def route_board(board: str | Path, workdir: str | Path | None = None) -> dict:
     ses = work / f"{stem}.ses"
     export_dsn(board, dsn)
     run_freerouting(dsn, ses)
+    filter_ses(ses)
     import_ses(board, ses)
     report = run_drc(board)
     return {"board": str(board), "drc": drc_summary(report)}
