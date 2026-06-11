@@ -103,6 +103,7 @@ def emit_routes(
             continue
         if net_atom(name) is None:
             continue
+        net_vias: set[tuple[float, float]] = set()
         for path in nr.paths:
             # terminal nodes snap to exact pad coordinates: cell centers can
             # miss thin pad copper by up to pitch/2, which DRC reads as a
@@ -112,8 +113,15 @@ def emit_routes(
                 for term in (path[0], path[-1]):
                     if term in anchors:
                         snap[term] = anchors[term]
-            runs = [r for r in simplify(path) if len(r) >= 2]  # no degenerate runs
-            for i, run in enumerate(runs):
+            runs = simplify(path)
+            # segments only for multi-node runs, but vias for EVERY layer
+            # transition of the ORIGINAL run list: filtering single-node
+            # terminal runs before via emission amputated the via-in-pad that
+            # connected back-layer approaches to front-only pads (the R4
+            # dangling class, root-caused by numeric geometry walk)
+            for run in runs:
+                if len(run) < 2:
+                    continue
                 layer = layer_name[run[0][0]]
                 for a, b in zip(run, run[1:], strict=False):
                     xa, ya = snap.get(a) or grid.to_world(a[1], a[2])
@@ -125,15 +133,26 @@ def emit_routes(
                         node("layer", atom(layer, quote=True)),
                         net_atom(name)))
                     segs += 1
-                if i + 1 < len(runs):  # via between layer runs
-                    vx, vy = grid.to_world(run[-1][1], run[-1][2])
-                    root.insert(node("via",
-                        node("at", f"{vx:.3f}", f"{vy:.3f}"),
-                        node("size", str(via_mm)),
-                        node("drill", str(via_drill_mm)),
-                        node("layers", atom("F.Cu", quote=True), atom("B.Cu", quote=True)),
-                        net_atom(name)))
-                    vias += 1
+            for i in range(len(runs) - 1):
+                tn = runs[i][-1]
+                other = runs[i + 1][0]
+                # a through-hole pad spans the layers itself — transitions
+                # INTO it need no via (via-in-hole = co-located drills)
+                same_cell = tn[1:] == other[1:]
+                if anchors and same_cell and tn in anchors and other in anchors:
+                    continue
+                pos = snap.get(tn) or snap.get(other)
+                vx, vy = pos if pos else grid.to_world(tn[1], tn[2])
+                if (vx, vy) in net_vias:
+                    continue  # one barrel per position per net
+                net_vias.add((vx, vy))
+                root.insert(node("via",
+                    node("at", f"{vx:.3f}", f"{vy:.3f}"),
+                    node("size", str(via_mm)),
+                    node("drill", str(via_drill_mm)),
+                    node("layers", atom("F.Cu", quote=True), atom("B.Cu", quote=True)),
+                    net_atom(name)))
+                vias += 1
     write_file(root, board)
     return {"segments": segs, "vias": vias}
 

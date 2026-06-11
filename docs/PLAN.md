@@ -90,8 +90,13 @@ better placement may move the routability needle more cheaply.
   junction hypothesis dead too. All 15 dangling are SHORT B.Cu FRAGMENTS (0.28–2.3mm,
   2–4 diagonal cells) at final pad approaches (d 0.26–0.88mm from own F.Cu-only SMD pads):
   the terminal sequence B.Cu-run → via → F.Cu-run → snapped-pad-end loses connectivity in
-  emit (run filtering / via placement / snap interplay). Next: dump one net's emitted
-  segment+via sequence (e.g. /GPIO20) and walk the geometry numerically.
+  emit (run filtering / via placement / snap interplay). NUMERIC WALK FOUND IT: the
+  degenerate-run filter amputated terminal vias-in-pad (B.Cu approach → via → F.Cu pad lost
+  its via). Fixed: vias at every layer transition of the unfiltered run list, suppressed at
+  through-pads (their barrel already spans layers), deduped per net. **Result: dangling 0,
+  co-located 0, unconnected 63 (best; FR=89). Engine now beats Freerouting on completion by
+  ~30% on the design-scope board.** Remaining: 44 clearance (fine-pitch shaves), 30
+  via-near-hole spacing — both named, both tunable.
 
 ## v0.4 — Fixer
 
