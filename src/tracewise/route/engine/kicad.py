@@ -154,6 +154,20 @@ def project_geometry(board: str | Path) -> dict:
     return geo
 
 
+def refill_zones(board: str | Path) -> None:
+    """Re-pour all zones around the newly emitted copper. Pours are not
+    routing obstacles — they refill with their own clearance after routing
+    (skipping this leaves stale fills crossing the new tracks, which DRC
+    reads as hundreds of clearance violations)."""
+    board = Path(board).resolve()
+    _run_pcbnew_script(
+        "import pcbnew; "
+        f"b = pcbnew.LoadBoard({str(board)!r}); "
+        "pcbnew.ZONE_FILLER(b).Fill(b.Zones()); "
+        f"pcbnew.SaveBoard({str(board)!r}, b)"
+    )
+
+
 def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     """End-to-end: extract -> grid -> route_all -> emit. Returns a summary."""
     data = extract_pads(board)
@@ -166,6 +180,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     results = route_all(grid, nets)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"])
+    refill_zones(board)
     ok = sum(1 for r in results.values() if r.ok)
     return {
         "nets": len(nets), "routed": ok, "failed": len(nets) - ok,

@@ -65,7 +65,12 @@ better placement may move the routability needle more cheaply.
   tracks_crossing 44→0. Honest completion reset: 107 unconnected on mitayi — the earlier
   24 was partly the unmark bug routing through erased obstacles. Remaining wall:
   castellated edge pads + unmodeled pours (R3) + escape routing.
-- [ ] R3: zones/pours in grid (per-zone clearance) + finer pitch option + pad escape → R4 ablation
+- [~] R3: **zone refill stage landed — the biggest single win: 412→72 violations**
+  (pours are not obstacles; they re-pour around tracks; stale fills were the phantom
+  clearance class). Fine-pitch experiment (0.05mm): completion unchanged (~96 unconnected,
+  castellated pads are sealed at any resolution), DRC worse (stair artifacts) — 0.1mm stays
+  default, finding recorded. Next: **escape allowance** (first-N-steps relaxation out of
+  sealed pads — the standard router answer to dense edge pads) → R4 ablation.
 
 ## v0.4 — Fixer
 
