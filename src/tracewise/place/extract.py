@@ -25,10 +25,13 @@ for fp in b.GetFootprints():
         crt = fp.GetCourtyard(pcbnew.B_CrtYd)
     if crt.OutlineCount() > 0:
         bb = crt.BBox()
-        w, h = bb.GetWidth() / IU, bb.GetHeight() / IU
     else:
-        bbox = fp.GetBoundingBox(False)
-        w, h = bbox.GetWidth() / IU, bbox.GetHeight() / IU
+        bb = fp.GetBoundingBox(False)
+    w, h = bb.GetWidth() / IU, bb.GetHeight() / IU
+    # footprint origin is NOT the box center (headers anchor at pin 1) —
+    # carry the center offset or every box is placed wrong
+    cx = bb.GetCenter().x / IU - fp.GetPosition().x / IU
+    cy = bb.GetCenter().y / IU - fp.GetPosition().y / IU
     pads = []
     for p in fp.Pads():
         off = p.GetPosition() - fp.GetPosition()
@@ -36,7 +39,7 @@ for fp in b.GetFootprints():
     fps.append({{
         "ref": fp.GetReference(),
         "x": fp.GetPosition().x / IU, "y": fp.GetPosition().y / IU,
-        "w": w, "h": h,
+        "w": w, "h": h, "cx": cx, "cy": cy,
         "locked": bool(fp.IsLocked()),
         "pads": pads,
     }})

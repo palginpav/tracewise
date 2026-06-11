@@ -26,6 +26,7 @@ class PlaceProblem:
     refs: list[str]
     pos0: torch.Tensor  # [N,2] initial positions (mm)
     size: torch.Tensor  # [N,2] (w,h)
+    coff: torch.Tensor  # [N,2] box-center offset from footprint origin
     movable: torch.Tensor  # [N] bool
     # nets: list of (fp_index tensor [k], offset tensor [k,2])
     nets: list[tuple[torch.Tensor, torch.Tensor]]
@@ -40,6 +41,7 @@ def build_problem(data: dict, lock_refs: set[str] | None = None) -> PlaceProblem
     refs = [f["ref"] for f in fps]
     pos0 = torch.tensor([[f["x"], f["y"]] for f in fps], dtype=torch.float64)
     size = torch.tensor([[max(f["w"], 0.1), max(f["h"], 0.1)] for f in fps], dtype=torch.float64)
+    coff = torch.tensor([[f.get("cx", 0.0), f.get("cy", 0.0)] for f in fps], dtype=torch.float64)
     movable = torch.tensor(
         [not f["locked"] and f["ref"] not in lock_refs for f in fps], dtype=torch.bool
     )
@@ -71,7 +73,7 @@ def build_problem(data: dict, lock_refs: set[str] | None = None) -> PlaceProblem
                 decap.append((c[0], t[0], torch.tensor([t[1], t[2]], dtype=torch.float64)))
 
     return PlaceProblem(
-        refs=refs, pos0=pos0, size=size, movable=movable, nets=nets,
+        refs=refs, pos0=pos0, size=size, coff=coff, movable=movable, nets=nets,
         board=(data["board"]["x1"], data["board"]["y1"],
                data["board"]["x2"], data["board"]["y2"]),
         decap=decap,
@@ -196,21 +198,23 @@ def optimize(
         w_ov = w_overlap_final * t  # let parts pass through each other early
         cost = (
             smooth_hpwl(pos, prob.nets, tau=tau)
-            + w_ov * overlap_penalty(pos, prob.size)
-            + 10.0 * boundary_penalty(pos, prob.size, prob.board)
+            + w_ov * overlap_penalty(pos + prob.coff, prob.size)
+            + 10.0 * boundary_penalty(pos + prob.coff, prob.size, prob.board)
             + w_decap * decap_penalty(pos, prob.decap)
         )
         cost.backward()
         opt.step()
     final = prob.pos0 + delta.detach() * mask
-    overlap_global = float(overlap_penalty(final, prob.size))
-    final = legalize(final, prob.size, prob.movable, prob.board)
+    centers = final + prob.coff
+    overlap_global = float(overlap_penalty(centers, prob.size))
+    centers = legalize(centers, prob.size, prob.movable, prob.board)
+    final = centers - prob.coff
     return {
         "positions": {r: (float(final[i, 0]), float(final[i, 1]))
                       for i, r in enumerate(prob.refs) if bool(prob.movable[i])},
         "hpwl_before": true_hpwl(prob.pos0, prob.nets),
-        "overlap_initial": float(overlap_penalty(prob.pos0, prob.size)),
+        "overlap_initial": float(overlap_penalty(prob.pos0 + prob.coff, prob.size)),
         "hpwl_after": true_hpwl(final, prob.nets),
         "overlap_global": overlap_global,
-        "overlap_after": float(overlap_penalty(final, prob.size)),
+        "overlap_after": float(overlap_penalty(final + prob.coff, prob.size)),
     }

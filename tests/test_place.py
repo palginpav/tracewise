@@ -22,6 +22,7 @@ def two_part_problem(d=10.0, movable=(True, True)):
         refs=["U1", "U2"],
         pos0=torch.tensor([[0.0, 0.0], [d, 0.0]], dtype=torch.float64),
         size=torch.tensor([[2.0, 2.0], [2.0, 2.0]], dtype=torch.float64),
+        coff=torch.zeros(2, 2, dtype=torch.float64),
         movable=torch.tensor(list(movable)),
         nets=[(torch.tensor([0, 1]), torch.zeros(2, 2, dtype=torch.float64))],
         board=(-50.0, -50.0, 50.0, 50.0),
@@ -106,3 +107,23 @@ def test_legalize_respects_locked():
     out = legalize(pos, size, movable, (-50.0, -50.0, 50.0, 50.0))
     assert torch.allclose(out[0], pos[0])
     assert float(overlap_penalty(out, size)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_center_offset_keeps_box_on_board():
+    """A header anchored at pin 1: origin at left end, box center 12.5mm right.
+    Boundary math must use the box center, not the origin."""
+    prob = PlaceProblem(
+        refs=["J1", "U1"],
+        pos0=torch.tensor([[40.0, 10.0], [10.0, 10.0]], dtype=torch.float64),
+        size=torch.tensor([[25.0, 2.5], [5.0, 5.0]], dtype=torch.float64),
+        coff=torch.tensor([[12.5, 0.0], [0.0, 0.0]], dtype=torch.float64),
+        movable=torch.tensor([True, True]),
+        nets=[(torch.tensor([0, 1]), torch.zeros(2, 2, dtype=torch.float64))],
+        board=(0.0, 0.0, 51.0, 21.0),
+        decap=[],
+    )
+    r = optimize(prob, iters=300, lr=0.3)
+    x = r["positions"]["J1"][0]
+    # box spans [x, x+25] — right edge must stay on the 51mm board
+    assert x + 25.0 <= 51.0 + 0.5
+    assert x >= -0.5
