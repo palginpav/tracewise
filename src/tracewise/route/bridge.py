@@ -254,7 +254,9 @@ def board_metrics(board: str | Path) -> dict:
         "ts = list(b.GetTracks()); "
         "segs = [t for t in ts if t.GetClass() in ('PCB_TRACK','PCB_ARC')]; "
         "vias = [t for t in ts if t.GetClass()=='PCB_VIA']; "
+        "fcu = sum(1 for t in segs if t.GetLayerName()=='F.Cu'); "
         "print(json.dumps({'segments': len(segs), 'vias': len(vias), "
+        "'f_cu': fcu, 'b_cu': len(segs)-fcu, "
         "'length_mm': round(sum(t.GetLength() for t in segs)/1e6, 1)}))"
     )
     return json.loads(out.strip().splitlines()[-1])

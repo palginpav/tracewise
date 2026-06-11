@@ -38,7 +38,7 @@ def prepare(src_project: Path, mode: str) -> Path:
     return dest
 
 
-def run_mode(project: Path, mode: str) -> dict:
+def run_mode(project: Path, mode: str) -> dict:  # noqa: C901
     work = prepare(project, mode)
     board = next(work.glob("*.kicad_pcb"))
     # root sheet = the one named like the board (hierarchical projects have sub-sheets)
@@ -49,11 +49,16 @@ def run_mode(project: Path, mode: str) -> dict:
     pro_original = pro.read_text(encoding="utf-8") if pro else None
 
     strip_routing(board)
-    if mode == "constrained" and sch is not None:
-        nl = parse_netlist(export_netlist(sch))
-        spec = BoardSpec.for_project(work)
-        generate(nl, spec, work)
-    route_board(board, workdir=work)
+    if mode == "engine":
+        from tracewise.route.engine.kicad import route_board_engine
+
+        route_board_engine(board)
+    else:
+        if mode == "constrained" and sch is not None:
+            nl = parse_netlist(export_netlist(sch))
+            spec = BoardSpec.for_project(work)
+            generate(nl, spec, work)
+        route_board(board, workdir=work)
 
     # FAIR SCORING: constraints may influence routing, but both arms must be
     # judged against the identical rule set — restore the original project
@@ -63,7 +68,10 @@ def run_mode(project: Path, mode: str) -> dict:
     for dru in work.glob("*.kicad_dru"):
         dru.unlink()
 
-    drc = drc_summary(run_drc(board))
+    report = run_drc(board)
+    drc = drc_summary(report)
+    drc["dangling"] = sum(1 for v in report.get("violations", [])
+                          if v["type"] in ("track_dangling", "via_dangling"))
     metrics = board_metrics(board)
     return {**drc, **metrics}
 
@@ -71,6 +79,7 @@ def run_mode(project: Path, mode: str) -> dict:
 @app.command()
 def main(
     projects: str = typer.Option("pic_programmer", "--projects", help="comma-separated"),
+    modes: str = typer.Option("naked,constrained", "--modes", help="naked,constrained,engine"),
     src_root: Path = typer.Option(Path("data/demo-projects"), "--src"),
     out: Path = typer.Option(Path("docs/route-ablation.md"), "--out"),
 ) -> None:
@@ -81,18 +90,20 @@ def main(
         "(naked) and after `tracewise constrain` generated net classes + rules "
         "(constrained). Freerouting 2.2.4, default effort.",
         "",
-        "| Board | Mode | unconnected | DRC violations | vias | length (mm) |",
-        "|---|---|---|---|---|---|",
+        "| Board | Mode | unconnected | DRC violations | dangling | vias "
+        "| F/B split | length (mm) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for name in projects.split(","):
         project = src_root / name.strip()
-        for mode in ("naked", "constrained"):
+        for mode in modes.split(","):
             typer.echo(f"=== {name} [{mode}] ...")
             r = run_mode(project, mode)
             typer.echo(f"    {r}")
             lines.append(
                 f"| {name} | {mode} | {r['unconnected']} | {r['violations']} "
-                f"| {r['vias']} | {r['length_mm']} |"
+                f"| {r['dangling']} | {r['vias']} | {r.get('f_cu', '?')}/{r.get('b_cu', '?')} "
+                f"| {r['length_mm']} |"
             )
     lines.append("")
     out.write_text("\n".join(lines), encoding="utf-8")
