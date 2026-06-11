@@ -41,6 +41,7 @@ for fp in b.GetFootprints():
         "x": fp.GetPosition().x / IU, "y": fp.GetPosition().y / IU,
         "w": w, "h": h, "cx": cx, "cy": cy,
         "locked": bool(fp.IsLocked()),
+        "rot": fp.GetOrientation().AsDegrees(),
         "pads": pads,
     }})
 edges = b.GetBoardEdgesBoundingBox()
@@ -69,8 +70,11 @@ IU = 1e6
 for fp in b.GetFootprints():
     r = fp.GetReference()
     if r in moves and not fp.IsLocked():
-        x, y = moves[r]
-        fp.SetPosition(pcbnew.VECTOR2I(int(x * IU), int(y * IU)))
+        m = moves[r]
+        fp.SetPosition(pcbnew.VECTOR2I(int(m[0] * IU), int(m[1] * IU)))
+        if len(m) > 2 and m[2]:
+            fp.SetOrientation(fp.GetOrientation()
+                              + pcbnew.EDA_ANGLE(float(m[2]), pcbnew.DEGREES_T))
 pcbnew.SaveBoard({board!r}, b)
 print("moved", sum(1 for fp in b.GetFootprints() if fp.GetReference() in moves))
 """

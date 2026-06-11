@@ -219,7 +219,8 @@ def legalize_tetris(
     margin: float = 0.2,
     step: float = 0.25,
     max_r: float = 12.0,
-) -> torch.Tensor:
+    rotatable: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, set[int]]:
     """Tetris-style legalization in box-center space: components legalize
     one at a time (largest first), each snapping to the nearest position
     (expanding ring search) that overlaps nothing already legal. Locked parts
@@ -243,27 +244,36 @@ def legalize_tetris(
                    for dy in range(-k, k + 1)),
                   key=lambda o: o[0] * o[0] + o[1] * o[1])
 
+    rotated: set[int] = set()
     order = sorted((i for i in range(n) if bool(movable[i])),
                    key=lambda i: -float(size[i, 0] * size[i, 1]))
     for i in order:
-        hx, hy = float(half[i, 0]), float(half[i, 1])
         dx0, dy0 = float(out[i, 0]), float(out[i, 1])
+        variants = [(float(half[i, 0]), float(half[i, 1]), False)]
+        can_rot = rotatable is not None and bool(rotatable[i])
+        if can_rot and abs(float(half[i, 0]) - float(half[i, 1])) > step:
+            variants.append((float(half[i, 1]), float(half[i, 0]), True))
         placed_ok = False
         for ox, oy in offs:
-            cx = min(max(dx0 + ox, x1 + hx), x2 - hx)
-            cy = min(max(dy0 + oy, y1 + hy), y2 - hy)
-            r = (cx - hx, cy - hy, cx + hx, cy + hy)
-            if all(r[2] <= q[0] or q[2] <= r[0] or r[3] <= q[1] or q[3] <= r[1]
-                   for q in placed):
-                out[i, 0], out[i, 1] = cx, cy
-                placed.append(r)
-                placed_ok = True
+            for hx, hy, rot in variants:
+                cx = min(max(dx0 + ox, x1 + hx), x2 - hx)
+                cy = min(max(dy0 + oy, y1 + hy), y2 - hy)
+                r = (cx - hx, cy - hy, cx + hx, cy + hy)
+                if all(r[2] <= q[0] or q[2] <= r[0] or r[3] <= q[1] or q[3] <= r[1]
+                       for q in placed):
+                    out[i, 0], out[i, 1] = cx, cy
+                    placed.append(r)
+                    placed_ok = True
+                    if rot:
+                        rotated.add(i)
+                    break
+            if placed_ok:
                 break
         if not placed_ok:
             hxr, hyr = float(half[i, 0]), float(half[i, 1])
             cx, cy = float(out[i, 0]), float(out[i, 1])
             placed.append((cx - hxr, cy - hyr, cx + hxr, cy + hyr))  # leave as-is
-    return out
+    return out, rotated
 
 
 def optimize(
@@ -273,6 +283,7 @@ def optimize(
     w_overlap_final: float = 4.0,
     w_decap: float = 0.02,
     w_congestion: float = 0.3,
+    rotate: bool = False,
     seed: int = 0,
 ) -> dict:
     torch.manual_seed(seed)
@@ -297,11 +308,21 @@ def optimize(
     final = prob.pos0 + delta.detach() * mask
     centers = final + prob.coff
     overlap_global = float(overlap_penalty(centers, prob.size))
-    centers = legalize_tetris(centers, prob.size, prob.movable, prob.board)
+    # rotation candidates: origin ≈ box center (passives) — orientation swap
+    # keeps the box model exact without offset-rotation bookkeeping
+    rotatable = None
+    if rotate:  # v1 box-fit rotation measured NEGATIVE (scrambles pad axes);
+        # off by default until rotation scoring includes rotated-offset HPWL
+        rotatable = (prob.coff.abs().amax(dim=1)
+                     < 0.3 * prob.size.amin(dim=1)) & prob.movable
+    centers, rotated = legalize_tetris(centers, prob.size, prob.movable,
+                                       prob.board, rotatable=rotatable)
     final = centers - prob.coff
     return {
-        "positions": {r: (float(final[i, 0]), float(final[i, 1]))
+        "positions": {r: (float(final[i, 0]), float(final[i, 1]),
+                          90.0 if i in rotated else 0.0)
                       for i, r in enumerate(prob.refs) if bool(prob.movable[i])},
+        "rotated": len(rotated),
         "hpwl_before": true_hpwl(prob.pos0, prob.nets),
         "overlap_initial": float(overlap_penalty(prob.pos0 + prob.coff, prob.size)),
         "hpwl_after": true_hpwl(final, prob.nets),

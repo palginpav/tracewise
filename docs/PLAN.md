@@ -119,6 +119,10 @@ better placement may move the routability needle more cheaply.
   101→89 unconn (+12 nets). Overlap floor hit: ~147 vs human 130 is irreducible RECT-BBOX
   overlap (nested/rotated parts, 101% density board) — next gap is ROTATION support
   (placer treats orientation as fixed; humans rotate to pack). Gap to human: 26 nets.
+  Rotation v1 (box-fit-only 90° in tetris, center-anchored parts): NEGATIVE — 97 unconn
+  vs 89; rotating on fit alone scrambles pad axes and invalidates optimized wirelength.
+  Gated off by default (optimize(rotate=True) to enable). v2: score orientations with
+  rotated-offset HPWL inside the choice, or 4-way discrete rotation in the gradient phase.
 
 ## v0.4 — Fixer
 
