@@ -86,8 +86,12 @@ better placement may move the routability needle more cheaply.
   future fix. Pareto today: 72 unconn/107 err ↔ 80 unconn/58 err. R4 done (see
   route-ablation-r4.md). Snap-to-pad landed (terminal nodes emit exact pad coords) —
   correct but the dangling class survived unchanged (15): the gaps are TREE JUNCTIONS
-  (branches meeting earlier paths), not pad terminals. Next forensic target: junction
-  geometry — branch connections must land on emitted copper, including snapped ends.
+  (branches meeting earlier paths), not pad terminals — REVISED by instrumented forensics:
+  junction hypothesis dead too. All 15 dangling are SHORT B.Cu FRAGMENTS (0.28–2.3mm,
+  2–4 diagonal cells) at final pad approaches (d 0.26–0.88mm from own F.Cu-only SMD pads):
+  the terminal sequence B.Cu-run → via → F.Cu-run → snapped-pad-end loses connectivity in
+  emit (run filtering / via placement / snap interplay). Next: dump one net's emitted
+  segment+via sequence (e.g. /GPIO20) and walk the geometry numerically.
 
 ## v0.4 — Fixer
 
