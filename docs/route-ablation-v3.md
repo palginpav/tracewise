@@ -60,3 +60,15 @@ boards. Actions:
    engine slot in behind the same bridge; the DSN/SES plumbing and its battle-hardening carry over
 4. **v0.3 placer becomes the main line** — placement quality constrains routability more than
    rules do; that was the design doc's thesis and the evidence now backs it
+
+## Route-after-place experiment (v0.3 placer, center-offset-corrected)
+
+Does TraceWise placement improve Freerouting's completion? **No — it currently hurts it.**
+mitayi, routing stripped, placed by `tracewise place` (HPWL −11%, overlap 215 mm² vs the
+human's 130), then routed: **101 unconnected / 179 violations** vs the human placement's
+**89 / 4**. Wirelength is not routability: the HPWL+overlap objective doesn't model
+congestion, and residual overlap directly blocks routing channels. The human layout encodes
+routability knowledge (functional clustering, channel discipline) our cost function doesn't
+have yet. Documented gaps for the placer: congestion-aware cost term, rotation support,
+overlap-free legalization. The placement thesis stays unproven until those land — recorded,
+not spun.
