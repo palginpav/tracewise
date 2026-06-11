@@ -1,0 +1,13 @@
+(export (version "E")
+  (components
+    (comp (ref "U1") (value "STM32C031") (libsource (lib "L") (part "STM32C031C6Tx")))
+    (comp (ref "C1") (value "100n") (libsource (lib "L") (part "C"))))
+  (nets
+    (net (code "1") (name "VCC")
+      (node (ref "U1") (pin "7") (pinfunction "VDD") (pintype "power_in"))
+      (node (ref "C1") (pin "1") (pintype "passive")))
+    (net (code "2") (name "GND")
+      (node (ref "U1") (pin "8") (pinfunction "VSS") (pintype "power_in"))
+      (node (ref "C1") (pin "2") (pintype "passive")))
+    (net (code "3") (name "Net-(U1-PA0)")
+      (node (ref "U1") (pin "10") (pinfunction "PA0") (pintype "output")))))

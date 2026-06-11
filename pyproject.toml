@@ -8,6 +8,7 @@ authors = [{ name = "Pavel Palgin" }]
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
+    "pypdf>=4.0",
     "pydantic>=2.7",
     "typer>=0.12",
 ]

@@ -1,0 +1,18 @@
+(export (version "E")
+  (components
+    (comp (ref "U2") (value "TPS7A33") (libsource (lib "L") (part "TPS7A3301")))
+    (comp (ref "C1") (value "1u") (libsource (lib "L") (part "C")))
+    (comp (ref "C2") (value "1u") (libsource (lib "L") (part "C"))))
+  (nets
+    (net (code "1") (name "VIN")
+      (node (ref "U2") (pin "1") (pinfunction "IN") (pintype "power_in"))
+      (node (ref "C1") (pin "1") (pintype "passive")))
+    (net (code "2") (name "VOUT")
+      (node (ref "U2") (pin "5") (pinfunction "OUT") (pintype "power_out"))
+      (node (ref "C2") (pin "1") (pintype "passive")))
+    (net (code "3") (name "GND")
+      (node (ref "U2") (pin "2") (pinfunction "GND") (pintype "power_in"))
+      (node (ref "C1") (pin "2") (pintype "passive"))
+      (node (ref "C2") (pin "2") (pintype "passive")))
+    (net (code "4") (name "Net-(U2-EN)")
+      (node (ref "U2") (pin "3") (pinfunction "EN") (pintype "input")))))

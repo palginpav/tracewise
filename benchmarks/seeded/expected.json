@@ -1,0 +1,28 @@
+{
+  "_doc": "Expected findings per case: list of {category, evidence} where evidence must appear in the finding's nets or refs. Empty list = clean board, any finding is a false positive.",
+  "clean_mcu": [],
+  "i2c_no_pullup": [
+    {"category": "pullup", "evidence": "/SDA"},
+    {"category": "pullup", "evidence": "/SCL"}
+  ],
+  "no_decoupling": [
+    {"category": "decoupling", "evidence": "VCC"}
+  ],
+  "floating_enable": [
+    {"category": "floating", "evidence": "U2"}
+  ],
+  "multi_fault": [
+    {"category": "decoupling", "evidence": "VCC"},
+    {"category": "pullup", "evidence": "SDA1"},
+    {"category": "floating", "evidence": "U2"}
+  ],
+  "i2c_pinfunction": [
+    {"category": "pullup", "evidence": "Net-(U3-Pad5)"}
+  ],
+  "gnd_only_ok": [],
+  "sd_lines_ok": [],
+  "unused_output_ok": [],
+  "floating_irq": [
+    {"category": "floating", "evidence": "U4"}
+  ]
+}

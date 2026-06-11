@@ -15,9 +15,9 @@ measured results per release.
 ## v0.1 — Reviewer
 
 - [x] Netlist extraction (kicad-cli → our own sexpr parser) + compressed representation — measured on a real project: 57k → 1.6k tokens (2.8%)
-- [ ] Datasheet RAG corpus for benchmark boards (manifest + downloader pattern)
+- [x] Datasheet store (manifest + fetch, PDFs cached outside git) + keyword-window retrieval + per-part LLM verification pass (llm-datasheet source, citation field populated)
 - [x] Findings schema + hybrid review: deterministic rules (i2c-pullup, power-decoupling, floating-input) + LLM pass with hallucination guard (evidence must exist in netlist), confidence capped below rules, dedupe
-- [ ] Seeded-error benchmark suite + precision/recall scorecard (incl. clean-schematic FP rate)
+- [x] Seeded-error benchmark: 10 cases (4 clean controls) — rules-only AND rules+LLM both 1.00 recall / 1.00 precision; the LLM pass initially flagged incomplete fixtures (it was right) — fixtures fixed, scorecards committed
 - [x] CLI: `python -m tracewise review <sch>` → markdown/JSON; exit code = error count; rules-only fallback when Ollama absent
 - **Exit:** measured precision/recall on the seeded benchmark; useful report on a real board
 

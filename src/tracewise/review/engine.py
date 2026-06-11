@@ -88,10 +88,16 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
     return out
 
 
-def review_netlist(nl: Netlist, project: str, client: OllamaClient | None = None) -> Report:
+def review_netlist(
+    nl: Netlist, project: str, client: OllamaClient | None = None, datasheets: bool = True
+) -> Report:
     findings = run_rules(nl)
     if client is not None and client.available():
         findings += llm_findings(nl, client)
+        if datasheets:
+            from tracewise.review.partcheck import check_all_parts
+
+            findings += check_all_parts(nl, client)
     return Report(
         project=project,
         components=len(nl.components),

@@ -1,0 +1,13 @@
+(export (version "E")
+  (components
+    (comp (ref "U3") (value "EEPROM") (libsource (lib "L") (part "24LC256")))
+    (comp (ref "C1") (value "100n") (libsource (lib "L") (part "C"))))
+  (nets
+    (net (code "1") (name "VCC")
+      (node (ref "U3") (pin "8") (pinfunction "VCC") (pintype "power_in"))
+      (node (ref "C1") (pin "1") (pintype "passive")))
+    (net (code "2") (name "GND")
+      (node (ref "U3") (pin "4") (pinfunction "VSS") (pintype "power_in"))
+      (node (ref "C1") (pin "2") (pintype "passive")))
+    (net (code "3") (name "Net-(U3-Pad5)")
+      (node (ref "U3") (pin "5") (pinfunction "SDA") (pintype "bidirectional")))))
