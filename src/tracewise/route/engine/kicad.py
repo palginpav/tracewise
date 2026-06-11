@@ -64,7 +64,7 @@ def build_problem(
                 height_mm=bd["y2"] - bd["y1"], pitch=pitch, layers=2)
     inflate = track_mm / 2 + clearance_mm
     by_net: dict[str, list[tuple[int, int, int]]] = {}
-    carve: dict[str, list[tuple[int, float, float, float]]] = {}
+    carve: dict[str, list[tuple[int, float, float, float, float]]] = {}
     for p in data["pads"]:
         layers = ([0] if p["front"] else []) + ([1] if p["back"] else [])
         for layer in layers:
@@ -72,8 +72,9 @@ def build_problem(
                 cell = grid.clamp_cell(*grid.to_cell(p["x"], p["y"]))
                 by_net.setdefault(p["net"], []).append((layer, *cell))
                 carve.setdefault(p["net"], []).append(
-                    (layer, p["x"], p["y"], p["r"] + inflate))
-            grid.block_disc(layer, p["x"], p["y"], p["r"] + inflate)
+                    (layer, p["x"], p["y"], p["r"] + inflate, p["r"]))
+            grid.block_disc(layer, p["x"], p["y"], p["r"] + inflate,
+                            hard_radius_mm=p["r"])
     half_cells = max(1, math.ceil((track_mm / 2 + clearance_mm) / pitch))
     nets = [Net(name, pads, halfwidth_cells=half_cells, carve=carve.get(name, []))
             for name, pads in by_net.items() if len(pads) >= 2]
@@ -177,7 +178,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     via_half = max(1, math.ceil((geo["via_mm"] / 2 + geo["clearance_mm"]) / pitch))
     for n in nets:
         n.via_halfwidth_cells = via_half
-    results = route_all(grid, nets)
+    results = route_all(grid, nets, escape=12)  # ~1.2mm endpoint escape
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"])
     refill_zones(board)

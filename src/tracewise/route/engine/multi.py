@@ -29,8 +29,8 @@ class Net:
     pads: list[tuple[int, int, int]]  # (layer, iy, ix)
     halfwidth_cells: int = 1  # track halfwidth + clearance, in cells
     via_halfwidth_cells: int = 5  # via radius + clearance, in cells
-    # own pad discs to carve free while this net routes: (layer, x_mm, y_mm, r_mm)
-    carve: list[tuple[int, float, float, float]] = field(default_factory=list)
+    # own pad discs to carve free while routing: (layer, x_mm, y_mm, r_inflated, r_pad)
+    carve: list[tuple[int, float, float, float, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -49,11 +49,13 @@ def _mark(grid: Grid, nr: NetRoute, delta: int) -> None:
         y1, y2 = max(0, iy - r), min(grid.ny, iy + r + 1)
         x1, x2 = max(0, ix - r), min(grid.nx, ix + r + 1)
         grid.cells[layer, y1:y2, x1:x2] += delta
+        grid.hard[layer, y1:y2, x1:x2] += delta  # routed copper is never escapable
     rv = nr.net.via_halfwidth_cells  # vias block every layer with their full disc
     for iy, ix in nr.via_sites:
         y1, y2 = max(0, iy - rv), min(grid.ny, iy + rv + 1)
         x1, x2 = max(0, ix - rv), min(grid.nx, ix + rv + 1)
         grid.cells[:, y1:y2, x1:x2] += delta
+        grid.hard[:, y1:y2, x1:x2] += delta
 
 
 def _bbox_size(net: Net) -> int:
@@ -66,24 +68,24 @@ def order_nets(nets: list[Net]) -> list[Net]:
     return sorted(nets, key=lambda n: (0 if POWER.match(n.name) else 1, _bbox_size(n)))
 
 
-def route_net(grid: Grid, net: Net, via_cost: float = 10.0) -> NetRoute:
+def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> NetRoute:
     nr = NetRoute(net=net)
     if len(net.pads) < 2:
         nr.ok = True  # nothing to connect
         return nr
-    for layer, x, y, r in net.carve:  # own pads must not wall the net in
-        grid.block_disc(layer, x, y, r, delta=-1)
+    for layer, x, y, r, rp in net.carve:  # own pads must not wall the net in
+        grid.block_disc(layer, x, y, r, delta=-1, hard_radius_mm=rp)
     tree: set[tuple[int, int, int]] = {net.pads[0]}
     for pad in net.pads[1:]:
         if pad in tree:
             continue
-        res: RouteResult = route(grid, pad, tree, via_cost=via_cost)
+        res: RouteResult = route(grid, pad, tree, via_cost=via_cost, escape=escape)
         if not res.ok:
             nr.reason = f"pad {pad}: {res.reason}"
             nr.cells.clear()
             nr.paths.clear()
-            for layer, x, y, r in net.carve:
-                grid.block_disc(layer, x, y, r, delta=1)
+            for layer, x, y, r, rp in net.carve:
+                grid.block_disc(layer, x, y, r, delta=1, hard_radius_mm=rp)
             return nr  # all-or-nothing: no stubs
         nr.paths.append(res.path)
         vias = {(a[1], a[2]) for a, b in zip(res.path, res.path[1:], strict=False)
@@ -93,8 +95,8 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0) -> NetRoute:
         # stack a second via on the same hole (dangling + hole-to-hole)
         tree.update(n for n in res.path if (n[1], n[2]) not in vias)
     nr.cells = tree - set(net.pads)  # pads stay as the pad obstacles they are
-    for layer, x, y, r in net.carve:
-        grid.block_disc(layer, x, y, r, delta=1)
+    for layer, x, y, r, rp in net.carve:
+        grid.block_disc(layer, x, y, r, delta=1, hard_radius_mm=rp)
     nr.ok = True
     return nr
 
@@ -115,7 +117,7 @@ def _nearest_victim(failed: Net, routed: list[NetRoute]) -> NetRoute | None:
 
 
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
-              ripup_factor: int = 8) -> dict[str, NetRoute]:
+              ripup_factor: int = 8, escape: int = 0) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute."""
     results: dict[str, NetRoute] = {}
     routed: list[NetRoute] = []
@@ -127,7 +129,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         net = queue.pop(0)
         budget -= 1
         attempts[net.name] = attempts.get(net.name, 0) + 1
-        nr = route_net(grid, net, via_cost=via_cost)
+        nr = route_net(grid, net, via_cost=via_cost, escape=escape)
         if nr.ok:
             _mark(grid, nr, 1)
             routed.append(nr)

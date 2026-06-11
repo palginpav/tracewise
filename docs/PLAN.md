@@ -69,8 +69,11 @@ better placement may move the routability needle more cheaply.
   (pours are not obstacles; they re-pour around tracks; stale fills were the phantom
   clearance class). Fine-pitch experiment (0.05mm): completion unchanged (~96 unconnected,
   castellated pads are sealed at any resolution), DRC worse (stair artifacts) — 0.1mm stays
-  default, finding recorded. Next: **escape allowance** (first-N-steps relaxation out of
-  sealed pads — the standard router answer to dense edge pads) → R4 ablation.
+  default, finding recorded. Escape allowance landed (two-tier grid: hard copper never
+  crossable, clearance halos passable within ~1.2mm of endpoints at +2.0/cell penalty):
+  unconnected 97→93 — modest; the castellated holdouts fail differently (clamped edge-pad
+  centers likely landing inside neighbor hard copper — per-pad geometry investigation next).
+  Then R4 ablation.
 
 ## v0.4 — Fixer
 

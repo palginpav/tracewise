@@ -33,6 +33,9 @@ class Grid:
         self.nx = max(1, int(round(self.width_mm / self.pitch)))
         self.ny = max(1, int(round(self.height_mm / self.pitch)))
         self.cells = np.zeros((self.layers, self.ny, self.nx), dtype=np.int16)
+        # hard copper only (no clearance halo): the escape allowance may relax
+        # halos near route endpoints but must never cross actual copper
+        self.hard = np.zeros((self.layers, self.ny, self.nx), dtype=np.int16)
 
     # --- transforms ---------------------------------------------------------
 
@@ -50,8 +53,7 @@ class Grid:
 
     # --- obstacle marking (inflation included by the caller's radius) --------
 
-    def block_disc(self, layer: int, x: float, y: float, radius_mm: float,
-                   delta: int = 1) -> None:
+    def _disc(self, arr, layer: int, x: float, y: float, radius_mm: float, delta: int) -> None:
         cy, cx = self.to_cell(x, y)
         r = int(np.ceil(radius_mm / self.pitch))
         y1, y2 = max(0, cy - r), min(self.ny, cy + r + 1)
@@ -60,7 +62,13 @@ class Grid:
             return
         yy, xx = np.ogrid[y1:y2, x1:x2]
         mask = (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
-        self.cells[layer, y1:y2, x1:x2][mask] += delta
+        arr[layer, y1:y2, x1:x2][mask] += delta
+
+    def block_disc(self, layer: int, x: float, y: float, radius_mm: float,
+                   delta: int = 1, hard_radius_mm: float | None = None) -> None:
+        self._disc(self.cells, layer, x, y, radius_mm, delta)
+        if hard_radius_mm is not None:
+            self._disc(self.hard, layer, x, y, hard_radius_mm, delta)
 
     def block_rect(self, layer: int, x1: float, y1: float, x2: float, y2: float,
                    inflate_mm: float = 0.0) -> None:
@@ -71,6 +79,11 @@ class Grid:
 
     def free(self, layer: int, iy: int, ix: int) -> bool:
         return self.in_bounds(iy, ix) and self.cells[layer, iy, ix] == FREE
+
+    def halo_only(self, layer: int, iy: int, ix: int) -> bool:
+        """Blocked by clearance halo but not by actual copper."""
+        return (self.in_bounds(iy, ix) and self.cells[layer, iy, ix] != FREE
+                and self.hard[layer, iy, ix] == 0)
 
     def free_fraction(self) -> float:
         return float((self.cells == FREE).mean())

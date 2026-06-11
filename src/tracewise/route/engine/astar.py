@@ -35,6 +35,8 @@ def route(
     goals: set[tuple[int, int, int]],
     via_cost: float = 10.0,
     max_expansions: int = 2_000_000,
+    escape: int = 0,
+    escape_penalty: float = 2.0,
 ) -> RouteResult:
     """A* from start to the nearest of `goals`. Cells in `goals` need not be
     free (pads are blocked for other nets but are this net's targets)."""
@@ -77,12 +79,15 @@ def route(
             return RouteResult(False, [], 0.0, "expansion budget exceeded")
         nl, ny, nx = node
 
+        near_end = escape and (g < escape or h(node) < escape)
         neighbors = []
         for dy, dx, c in DIRS:
             iy, ix = ny + dy, nx + dx
             nxt = (nl, iy, ix)
             if nxt in goals or grid.free(nl, iy, ix):
                 neighbors.append((nxt, c))
+            elif near_end and grid.halo_only(nl, iy, ix):
+                neighbors.append((nxt, c + escape_penalty))  # shaved clearance, never copper
         for layer in range(grid.layers):  # via: change layer in place
             if layer != nl:
                 nxt = (layer, ny, nx)
