@@ -27,9 +27,11 @@ import httpx
 from tracewise.netlist import find_kicad_cli
 
 FREEROUTING_VERSION = "2.2.4"
+# the platform bundle ships its own JRE — the bare JAR needs a newer Java
+# (class file 69 = Java 25) than most systems carry
 FREEROUTING_URL = (
     "https://github.com/freerouting/freerouting/releases/download/"
-    f"v{FREEROUTING_VERSION}/freerouting-{FREEROUTING_VERSION}.jar"
+    f"v{FREEROUTING_VERSION}/freerouting-{FREEROUTING_VERSION}-linux-x64.zip"
 )
 CACHE = Path.home() / ".cache" / "tracewise"
 
@@ -100,24 +102,33 @@ def import_ses(board: str | Path, ses: str | Path) -> None:
 
 
 def fetch_freerouting() -> Path:
-    jar = CACHE / f"freerouting-{FREEROUTING_VERSION}.jar"
-    if jar.exists():
-        return jar
+    """Fetch and unpack the self-contained Freerouting bundle; returns the launcher."""
+    bundle = CACHE / "freerouting-bundle" / f"freerouting-{FREEROUTING_VERSION}-linux-x64"
+    launcher = bundle / "bin" / "freerouting"
+    if launcher.exists():
+        return launcher
     CACHE.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=120, follow_redirects=True) as c:
+    archive = CACHE / "freerouting.zip"
+    with httpx.Client(timeout=300, follow_redirects=True) as c:
         r = c.get(FREEROUTING_URL)
         r.raise_for_status()
-        jar.write_bytes(r.content)
-    return jar
+        archive.write_bytes(r.content)
+    import zipfile
+
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(CACHE / "freerouting-bundle")
+    archive.unlink()
+    launcher.chmod(0o755)
+    if not launcher.exists():
+        raise BridgeError("freerouting bundle missing its launcher after unpack")
+    return launcher
 
 
 def run_freerouting(dsn: str | Path, ses_out: str | Path, timeout_s: int = 1800) -> Path:
-    if not shutil.which("java"):
-        raise BridgeError("java not found (Freerouting needs Java 17+)")
-    jar = fetch_freerouting()
+    launcher = fetch_freerouting()
     dsn, ses_out = Path(dsn).resolve(), Path(ses_out).resolve()
     res = subprocess.run(
-        ["java", "-jar", str(jar), "-de", str(dsn), "-do", str(ses_out), "-da"],
+        [str(launcher), "-de", str(dsn), "-do", str(ses_out), "-da"],
         capture_output=True, text=True, timeout=timeout_s,
     )
     if not ses_out.exists():
