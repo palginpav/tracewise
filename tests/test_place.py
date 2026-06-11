@@ -87,3 +87,22 @@ def test_build_problem_from_extract_shape():
     assert len(prob.decap) == 1  # C1 attracted to U1's VCC pad
     r = optimize(prob, iters=200, lr=0.3)
     assert r["hpwl_after"] <= r["hpwl_before"]
+
+
+def test_legalize_removes_overlap():
+    from tracewise.place.core import legalize
+    pos = torch.tensor([[0.0, 0.0], [0.5, 0.0], [0.2, 0.3]], dtype=torch.float64)
+    size = torch.tensor([[2.0, 2.0]] * 3, dtype=torch.float64)
+    movable = torch.tensor([True, True, True])
+    out = legalize(pos, size, movable, (-50.0, -50.0, 50.0, 50.0))
+    assert float(overlap_penalty(out, size)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_legalize_respects_locked():
+    from tracewise.place.core import legalize
+    pos = torch.tensor([[0.0, 0.0], [0.5, 0.0]], dtype=torch.float64)
+    size = torch.tensor([[2.0, 2.0]] * 2, dtype=torch.float64)
+    movable = torch.tensor([False, True])
+    out = legalize(pos, size, movable, (-50.0, -50.0, 50.0, 50.0))
+    assert torch.allclose(out[0], pos[0])
+    assert float(overlap_penalty(out, size)) == pytest.approx(0.0, abs=1e-6)

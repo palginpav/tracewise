@@ -19,7 +19,16 @@ b = pcbnew.LoadBoard({board!r})
 IU = 1e6  # nm per mm
 fps = []
 for fp in b.GetFootprints():
-    bbox = fp.GetBoundingBox(False)  # without text
+    # courtyard is the legality contract; bbox (incl. silk) only as fallback
+    crt = fp.GetCourtyard(pcbnew.F_CrtYd)
+    if crt.OutlineCount() == 0:
+        crt = fp.GetCourtyard(pcbnew.B_CrtYd)
+    if crt.OutlineCount() > 0:
+        bb = crt.BBox()
+        w, h = bb.GetWidth() / IU, bb.GetHeight() / IU
+    else:
+        bbox = fp.GetBoundingBox(False)
+        w, h = bbox.GetWidth() / IU, bbox.GetHeight() / IU
     pads = []
     for p in fp.Pads():
         off = p.GetPosition() - fp.GetPosition()
@@ -27,7 +36,7 @@ for fp in b.GetFootprints():
     fps.append({{
         "ref": fp.GetReference(),
         "x": fp.GetPosition().x / IU, "y": fp.GetPosition().y / IU,
-        "w": bbox.GetWidth() / IU, "h": bbox.GetHeight() / IU,
+        "w": w, "h": h,
         "locked": bool(fp.IsLocked()),
         "pads": pads,
     }})

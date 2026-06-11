@@ -131,6 +131,51 @@ def decap_penalty(pos: torch.Tensor, decap) -> torch.Tensor:
     return total
 
 
+def legalize(
+    pos: torch.Tensor,
+    size: torch.Tensor,
+    movable: torch.Tensor,
+    board,
+    iters: int = 800,
+    margin: float = 0.25,
+) -> torch.Tensor:
+    """Remove residual overlaps by iterative pairwise push-apart along the
+    axis of least separation (locked parts never move), then clamp to the
+    board. Simple relaxation — adequate at PCB densities; not a packer."""
+    pos = pos.clone()
+    half = (size + margin) / 2
+    x1, y1, x2, y2 = board
+    mv = movable.double().unsqueeze(1)
+    for _ in range(iters):
+        d = pos[:, None, :] - pos[None, :, :]  # [N,N,2]
+        need = half[:, None, :] + half[None, :, :]
+        ov = need - d.abs()  # positive where overlapping per-axis
+        overlapping = (ov[..., 0] > 0) & (ov[..., 1] > 0)
+        overlapping = overlapping & ~torch.eye(len(pos), dtype=torch.bool)
+        if not overlapping.any():
+            break
+        push = torch.zeros_like(pos)
+        # push along the axis with the smaller penetration
+        axis = (ov[..., 0] > ov[..., 1]).long()  # 1 -> push in y, 0 -> push in x
+        for a in (0, 1):
+            sel = overlapping & (axis == a)
+            if not sel.any():
+                continue
+            sign = torch.sign(d[..., a]) + (d[..., a] == 0).double()
+            amount = ov[..., a] * sel.double() * sign * 0.2
+            push[:, a] += amount.sum(dim=1)
+        pos = pos + push.clamp(-2.0, 2.0) * mv
+        clamped = torch.stack(
+            [
+                torch.maximum(torch.minimum(pos[:, 0], x2 - half[:, 0]), x1 + half[:, 0]),
+                torch.maximum(torch.minimum(pos[:, 1], y2 - half[:, 1]), y1 + half[:, 1]),
+            ],
+            dim=1,
+        )
+        pos = torch.where(movable.unsqueeze(1), clamped, pos)
+    return pos
+
+
 def optimize(
     prob: PlaceProblem,
     iters: int = 800,
@@ -157,11 +202,15 @@ def optimize(
         )
         cost.backward()
         opt.step()
-    final = (prob.pos0 + delta.detach() * mask)
+    final = prob.pos0 + delta.detach() * mask
+    overlap_global = float(overlap_penalty(final, prob.size))
+    final = legalize(final, prob.size, prob.movable, prob.board)
     return {
         "positions": {r: (float(final[i, 0]), float(final[i, 1]))
                       for i, r in enumerate(prob.refs) if bool(prob.movable[i])},
         "hpwl_before": true_hpwl(prob.pos0, prob.nets),
+        "overlap_initial": float(overlap_penalty(prob.pos0, prob.size)),
         "hpwl_after": true_hpwl(final, prob.nets),
+        "overlap_global": overlap_global,
         "overlap_after": float(overlap_penalty(final, prob.size)),
     }
