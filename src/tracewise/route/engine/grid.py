@@ -75,9 +75,17 @@ class Grid:
         """A rectangular pad: hard copper over the exact rect, clearance halo
         over the inflated rect. Rectangles, not discs — disc-rounding tall pads
         (castellated edges) builds phantom copper walls that seal the board."""
+        import math as _m
+
         for arr, inf in ((self.cells, inflate_mm), (self.hard, 0.0)):
-            cy1, cx1 = self.to_cell(min(x1, x2) - inf, min(y1, y2) - inf)
-            cy2, cx2 = self.to_cell(max(x1, x2) + inf, max(y1, y2) + inf)
+            # directional rounding: floor the min corner, ceil the max corner —
+            # nearest-cell rounding under-covers halos by up to pitch/2, which
+            # measured as the dominant clearance-violation class (46/68 under
+            # 0.05 mm shortfall on the reference board)
+            cy1 = _m.floor((min(y1, y2) - inf - self.y0) / self.pitch)
+            cx1 = _m.floor((min(x1, x2) - inf - self.x0) / self.pitch)
+            cy2 = _m.ceil((max(y1, y2) + inf - self.y0) / self.pitch)
+            cx2 = _m.ceil((max(x1, x2) + inf - self.x0) / self.pitch)
             arr[layer, max(0, cy1):min(self.ny, cy2 + 1),
                 max(0, cx1):min(self.nx, cx2 + 1)] += delta
 

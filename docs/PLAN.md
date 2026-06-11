@@ -77,7 +77,13 @@ better placement may move the routability needle more cheaply.
   modeled as r=1.6mm discs overlapped each other at 2.54mm pitch = phantom copper sealing the
   edge. Pads are now true rectangles (hard = exact rect, halo = inflated): **93→72 unconnected,
   remaining failures are inner pads.** Visual render check (kicad-cli pcb render + F.Cu PDF):
-  routing fans out properly, pour refills clean. Clearance uptick (26→68) to tune. Then R4.
+  routing fans out properly, pour refills clean. CLEARANCE TUNING (4 hypotheses, measured):
+  directional halo rounding (kept — correct), geometric escape window (cost-based closed after
+  ~4 cells, stranding QFN pads), no-corner-cutting rule (45° segments clipped blocked corners),
+  via inflation must include the approaching track's halfwidth (the repeating 0.125mm class) +
+  via placement ring (barrel outsticks track copper). Clearance 70→33. Known limit recorded:
+  0.5mm-pitch QFN escapes shave clearance where humans neck track width — width-necking is the
+  future fix. Pareto today: 72 unconn/107 err ↔ 80 unconn/58 err. Then R4.
 
 ## v0.4 — Fixer
 

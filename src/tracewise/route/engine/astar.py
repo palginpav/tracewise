@@ -17,6 +17,18 @@ from dataclasses import dataclass
 from tracewise.route.engine.grid import Grid
 
 SQRT2 = math.sqrt(2.0)
+VIA_RING = 2  # via copper outsticks track copper; demand extra free ring (cells)
+
+
+def _via_ok(grid: Grid, iy: int, ix: int) -> bool:
+    """Via placement needs more room than a track centerline: the barrel
+    radius exceeds the track halfwidth the cell grid budgets for."""
+    for layer in range(grid.layers):
+        for dy in range(-VIA_RING, VIA_RING + 1):
+            for dx in range(-VIA_RING, VIA_RING + 1):
+                if not grid.free(layer, iy + dy, ix + dx):
+                    return False
+    return True
 DIRS = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
         (-1, -1, SQRT2), (-1, 1, SQRT2), (1, -1, SQRT2), (1, 1, SQRT2)]
 
@@ -79,19 +91,39 @@ def route(
             return RouteResult(False, [], 0.0, "expansion budget exceeded")
         nl, ny, nx = node
 
-        near_end = escape and (g < escape or h(node) < escape)
+        # escape window is GEOMETRIC distance from the endpoints — measuring
+        # by accumulated cost closes the window after ~4 cells once penalties
+        # stack, which strands fine-pitch (QFN) pads inside their halo fields
+        near_end = escape and (
+            max(abs(ny - sy), abs(nx - sx)) < escape or h(node) < escape
+        )
+
+        def passable(layer, iy, ix, _near=near_end):
+            if grid.free(layer, iy, ix):
+                return 0.0
+            if _near and grid.halo_only(layer, iy, ix):
+                return escape_penalty
+            return None
+
         neighbors = []
         for dy, dx, c in DIRS:
             iy, ix = ny + dy, nx + dx
             nxt = (nl, iy, ix)
-            if nxt in goals or grid.free(nl, iy, ix):
+            if nxt in goals:
                 neighbors.append((nxt, c))
-            elif near_end and grid.halo_only(nl, iy, ix):
-                neighbors.append((nxt, c + escape_penalty))  # shaved clearance, never copper
+                continue
+            pen = passable(nl, iy, ix)
+            if pen is None:
+                continue
+            if dy and dx:  # no corner cutting: a 45° segment between free cells
+                # still clips a blocked corner cell's halo in continuous geometry
+                if passable(nl, ny, ix) is None or passable(nl, iy, nx) is None:
+                    continue
+            neighbors.append((nxt, c + pen))
         for layer in range(grid.layers):  # via: change layer in place
             if layer != nl:
                 nxt = (layer, ny, nx)
-                if nxt in goals or grid.free(layer, ny, nx):
+                if nxt in goals or (grid.free(layer, ny, nx) and _via_ok(grid, ny, nx)):
                     neighbors.append((nxt, via_cost))
 
         for nxt, c in neighbors:

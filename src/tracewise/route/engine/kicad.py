@@ -174,7 +174,11 @@ def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     geo = project_geometry(board)
     grid, nets = build_problem(data, pitch=pitch,
                                track_mm=geo["track_mm"], clearance_mm=geo["clearance_mm"])
-    via_half = max(1, math.ceil((geo["via_mm"] / 2 + geo["clearance_mm"]) / pitch))
+    # via blocking must hold the NEXT track's centerline at
+    # via_r + clearance + track_halfwidth — omitting the halfwidth produced a
+    # repeating 0.125mm-actual violation class (measured)
+    via_half = max(1, math.ceil(
+        (geo["via_mm"] / 2 + geo["clearance_mm"] + geo["track_mm"] / 2) / pitch))
     for n in nets:
         n.via_halfwidth_cells = via_half
     results = route_all(grid, nets, escape=12)  # ~1.2mm endpoint escape
