@@ -49,6 +49,17 @@ better placement may move the routability needle more cheaply.
 - [ ] Placement metrics vs human layouts on benchmark boards
 - **Exit:** competitive wirelength + constraint satisfaction on benchmarks
 
+## Router engine progress (R-milestones, docs/ROUTER-DESIGN.md)
+
+- [x] R0: grid + A* + simplification (128ms corner-to-corner on 600k-node reference grid)
+- [x] R1: multi-net, power-first ordering, bounded rip-up (80/80 synthetic nets in 29s)
+- [~] R2: real boards end-to-end — pad extraction, own-pad carving, KiCad-10 name-based
+  net emission via sexpr. First live mitayi run: **60/61 nets routed, unconnected 24 vs
+  Freerouting's 89 (3.7× better completion)**. Open: via geometry in grid (vias modeled as
+  points → ~800 hole/short/mask violations), dangling-via emit bug (68), zones unmodeled
+  (→ 510 clearance hits in pours — that's R3 by design)
+- [ ] R2.1: via discs in grid + dangling-via fix → R3 zones → R4 three-board ablation
+
 ## v0.4 — Fixer
 
 - [ ] Patch generation for mechanical fixes (s-expression edits, grouped + labeled)

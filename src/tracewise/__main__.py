@@ -71,11 +71,23 @@ def constrain(
 @app.command()
 def route(
     board: Path = typer.Argument(..., help="Path to .kicad_pcb"),
+    engine: str = typer.Option("freerouting", "--engine", help="freerouting | tracewise"),
 ) -> None:
-    """Route via Freerouting (DSN/SES bridge) and report DRC."""
-    from tracewise.route.bridge import route_board
+    """Route the board (Freerouting bridge or the TraceWise engine) + DRC."""
+    if engine == "tracewise":
+        from tracewise.route.bridge import drc_summary, run_drc
+        from tracewise.route.engine.kicad import route_board_engine
 
-    summary = route_board(board)
+        s = route_board_engine(board)
+        typer.echo(f"engine: {s['routed']}/{s['nets']} nets, "
+                   f"{s['segments']} segments, {s['vias']} vias")
+        for n, why in list(s["failures"].items())[:8]:
+            typer.echo(f"  failed {n}: {why}")
+        summary = {"drc": drc_summary(run_drc(board))}
+    else:
+        from tracewise.route.bridge import route_board
+
+        summary = route_board(board)
     typer.echo(f"DRC: {summary['drc']}")
     raise typer.Exit(1 if summary["drc"]["violations"] else 0)
 

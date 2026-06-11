@@ -37,6 +37,9 @@ class Grid:
     def to_cell(self, x: float, y: float) -> tuple[int, int]:
         return (int(round((y - self.y0) / self.pitch)), int(round((x - self.x0) / self.pitch)))
 
+    def clamp_cell(self, iy: int, ix: int) -> tuple[int, int]:
+        return (min(max(iy, 0), self.ny - 1), min(max(ix, 0), self.nx - 1))
+
     def to_world(self, iy: int, ix: int) -> tuple[float, float]:
         return (self.x0 + ix * self.pitch, self.y0 + iy * self.pitch)
 
@@ -45,7 +48,8 @@ class Grid:
 
     # --- obstacle marking (inflation included by the caller's radius) --------
 
-    def block_disc(self, layer: int, x: float, y: float, radius_mm: float) -> None:
+    def block_disc(self, layer: int, x: float, y: float, radius_mm: float,
+                   value: int = BLOCKED) -> None:
         cy, cx = self.to_cell(x, y)
         r = int(np.ceil(radius_mm / self.pitch))
         y1, y2 = max(0, cy - r), min(self.ny, cy + r + 1)
@@ -54,7 +58,7 @@ class Grid:
             return
         yy, xx = np.ogrid[y1:y2, x1:x2]
         mask = (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
-        self.cells[layer, y1:y2, x1:x2][mask] = BLOCKED
+        self.cells[layer, y1:y2, x1:x2][mask] = value
 
     def block_rect(self, layer: int, x1: float, y1: float, x2: float, y2: float,
                    inflate_mm: float = 0.0) -> None:

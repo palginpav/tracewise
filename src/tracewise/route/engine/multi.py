@@ -28,6 +28,8 @@ class Net:
     name: str
     pads: list[tuple[int, int, int]]  # (layer, iy, ix)
     halfwidth_cells: int = 1  # track halfwidth + clearance, in cells
+    # own pad discs to carve free while this net routes: (layer, x_mm, y_mm, r_mm)
+    carve: list[tuple[int, float, float, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -62,6 +64,8 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0) -> NetRoute:
     if len(net.pads) < 2:
         nr.ok = True  # nothing to connect
         return nr
+    for layer, x, y, r in net.carve:  # own pads must not wall the net in
+        grid.block_disc(layer, x, y, r, value=FREE)
     tree: set[tuple[int, int, int]] = {net.pads[0]}
     for pad in net.pads[1:]:
         if pad in tree:
@@ -71,10 +75,14 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0) -> NetRoute:
             nr.reason = f"pad {pad}: {res.reason}"
             nr.cells.clear()
             nr.paths.clear()
+            for layer, x, y, r in net.carve:
+                grid.block_disc(layer, x, y, r)
             return nr  # all-or-nothing: no stubs
         nr.paths.append(res.path)
         tree.update(res.path)
     nr.cells = tree - set(net.pads)  # pads stay as the pad obstacles they are
+    for layer, x, y, r in net.carve:
+        grid.block_disc(layer, x, y, r)
     nr.ok = True
     return nr
 
