@@ -83,7 +83,11 @@ better placement may move the routability needle more cheaply.
   via inflation must include the approaching track's halfwidth (the repeating 0.125mm class) +
   via placement ring (barrel outsticks track copper). Clearance 70→33. Known limit recorded:
   0.5mm-pitch QFN escapes shave clearance where humans neck track width — width-necking is the
-  future fix. Pareto today: 72 unconn/107 err ↔ 80 unconn/58 err. Then R4.
+  future fix. Pareto today: 72 unconn/107 err ↔ 80 unconn/58 err. R4 done (see
+  route-ablation-r4.md). Snap-to-pad landed (terminal nodes emit exact pad coords) —
+  correct but the dangling class survived unchanged (15): the gaps are TREE JUNCTIONS
+  (branches meeting earlier paths), not pad terminals. Next forensic target: junction
+  geometry — branch connections must land on emitted copper, including snapped ends.
 
 ## v0.4 — Fixer
 

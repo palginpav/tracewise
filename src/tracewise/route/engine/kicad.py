@@ -58,13 +58,14 @@ def extract_pads(board: str | Path) -> dict:
 
 def build_problem(
     data: dict, pitch: float = 0.1, track_mm: float = 0.2, clearance_mm: float = 0.2
-) -> tuple[Grid, list[Net]]:
+) -> tuple[Grid, list[Net], dict]:
     bd = data["board"]
     grid = Grid(x0=bd["x1"], y0=bd["y1"], width_mm=bd["x2"] - bd["x1"],
                 height_mm=bd["y2"] - bd["y1"], pitch=pitch, layers=2)
     inflate = track_mm / 2 + clearance_mm
     by_net: dict[str, list[tuple[int, int, int]]] = {}
     carve: dict[str, list[tuple]] = {}
+    anchors: dict[tuple[int, int, int], tuple[float, float]] = {}
     for p in data["pads"]:
         layers = ([0] if p["front"] else []) + ([1] if p["back"] else [])
         rect = (p["x"] - p["hw"], p["y"] - p["hh"], p["x"] + p["hw"], p["y"] + p["hh"])
@@ -72,17 +73,19 @@ def build_problem(
             if p["net"]:
                 cell = grid.clamp_cell(*grid.to_cell(p["x"], p["y"]))
                 by_net.setdefault(p["net"], []).append((layer, *cell))
+                anchors[(layer, *cell)] = (p["x"], p["y"])
                 carve.setdefault(p["net"], []).append((layer, *rect, inflate))
             grid.block_pad(layer, *rect, inflate_mm=inflate)
     half_cells = max(1, math.ceil((track_mm / 2 + clearance_mm) / pitch))
     nets = [Net(name, pads, halfwidth_cells=half_cells, carve=carve.get(name, []))
             for name, pads in by_net.items() if len(pads) >= 2]
-    return grid, nets
+    return grid, nets, anchors
 
 
 def emit_routes(
     board: str | Path, grid: Grid, results: dict[str, NetRoute],
     track_mm: float = 0.2, via_mm: float = 0.6, via_drill_mm: float = 0.3,
+    anchors: dict | None = None,
 ) -> dict:
     """Write routed nets into the board file via the sexpr editor."""
     root = parse_file(board)
@@ -101,12 +104,20 @@ def emit_routes(
         if net_atom(name) is None:
             continue
         for path in nr.paths:
+            # terminal nodes snap to exact pad coordinates: cell centers can
+            # miss thin pad copper by up to pitch/2, which DRC reads as a
+            # dangling track end (the R4-falsified guarantee, repaired here)
+            snap = {}
+            if anchors:
+                for term in (path[0], path[-1]):
+                    if term in anchors:
+                        snap[term] = anchors[term]
             runs = [r for r in simplify(path) if len(r) >= 2]  # no degenerate runs
             for i, run in enumerate(runs):
                 layer = layer_name[run[0][0]]
                 for a, b in zip(run, run[1:], strict=False):
-                    xa, ya = grid.to_world(a[1], a[2])
-                    xb, yb = grid.to_world(b[1], b[2])
+                    xa, ya = snap.get(a) or grid.to_world(a[1], a[2])
+                    xb, yb = snap.get(b) or grid.to_world(b[1], b[2])
                     root.insert(node("segment",
                         node("start", f"{xa:.3f}", f"{ya:.3f}"),
                         node("end", f"{xb:.3f}", f"{yb:.3f}"),
@@ -172,8 +183,9 @@ def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
     """End-to-end: extract -> grid -> route_all -> emit. Returns a summary."""
     data = extract_pads(board)
     geo = project_geometry(board)
-    grid, nets = build_problem(data, pitch=pitch,
-                               track_mm=geo["track_mm"], clearance_mm=geo["clearance_mm"])
+    grid, nets, anchors = build_problem(data, pitch=pitch,
+                                        track_mm=geo["track_mm"],
+                                        clearance_mm=geo["clearance_mm"])
     # via blocking must hold the NEXT track's centerline at
     # via_r + clearance + track_halfwidth — omitting the halfwidth produced a
     # repeating 0.125mm-actual violation class (measured)
@@ -183,7 +195,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1) -> dict:
         n.via_halfwidth_cells = via_half
     results = route_all(grid, nets, escape=12)  # ~1.2mm endpoint escape
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
-                          via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"])
+                          via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
+                          anchors=anchors)
     refill_zones(board)
     ok = sum(1 for r in results.values() if r.ok)
     return {
