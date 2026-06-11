@@ -3,11 +3,15 @@
 **AI-assisted place & route for KiCad** — schematic review with datasheet grounding, constraint
 generation for autorouting, and analytical placement. Open source, local-first.
 
-> Status: **v0.1 — the Reviewer works.** `python -m tracewise review board.kicad_sch` produces
-> a findings report from deterministic rules + a local-LLM pass + per-part datasheet checks.
-> Seeded-error benchmark: **1.00 recall / 1.00 precision** in both modes
-> ([scorecards](docs/review-benchmark.md)). Design: [docs/DESIGN.md](docs/DESIGN.md) ·
-> roadmap: [docs/PLAN.md](docs/PLAN.md) · why not kiutils: [docs/spike-0-kiutils.md](docs/spike-0-kiutils.md)
+> Status: **v0.2** — Reviewer + constraint generation + a battle-tested Freerouting bridge.
+> `review` scores **1.00 recall / 1.00 precision** on the seeded benchmark
+> ([scorecards](docs/review-benchmark.md)). `constrain` + `route` work end-to-end on real
+> community boards — outline healing, ref sanitization and DSN-incompatibility auto-bisect
+> included, because real boards needed all of it. Routing ablation on three open-hardware
+> boards: **mixed, honestly analyzed** ([results](docs/route-ablation-v2.md)) — constraints
+> helped the dense 2-layer, hurt the tight 4-layer, and Freerouting's own ceiling dominates.
+> Design: [docs/DESIGN.md](docs/DESIGN.md) · roadmap: [docs/PLAN.md](docs/PLAN.md) ·
+> why not kiutils: [docs/spike-0-kiutils.md](docs/spike-0-kiutils.md)
 
 ## The idea
 
