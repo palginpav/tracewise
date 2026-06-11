@@ -115,6 +115,10 @@ better placement may move the routability needle more cheaply.
   HPWL-only; overlap 217 vs human 130). CONCLUSION across 3 placement experiments:
   residual overlap is the gate — overlapping courtyards block routing corridors directly.
   Dependency chain revised: scanline/Tetris legalizer FIRST, then congestion, then arm 2.
+  Tetris legalizer landed (largest-first ring-search snap, locked-aware): routability
+  101→89 unconn (+12 nets). Overlap floor hit: ~147 vs human 130 is irreducible RECT-BBOX
+  overlap (nested/rotated parts, 101% density board) — next gap is ROTATION support
+  (placer treats orientation as fixed; humans rotate to pack). Gap to human: 26 nets.
 
 ## v0.4 — Fixer
 

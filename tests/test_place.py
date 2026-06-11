@@ -140,3 +140,24 @@ def test_congestion_penalty_prefers_spread():
                           dtype=torch.float64)
     assert float(congestion_penalty(clumped, nets, board)) > \
         float(congestion_penalty(spread, nets, board))
+
+
+def test_tetris_zero_overlap_on_clump():
+    from tracewise.place.core import legalize_tetris
+    pos = torch.tensor([[10.0, 10.0], [10.3, 10.1], [10.1, 10.4], [9.8, 9.9]],
+                       dtype=torch.float64)
+    size = torch.tensor([[3.0, 3.0]] * 4, dtype=torch.float64)
+    movable = torch.tensor([True] * 4)
+    out = legalize_tetris(pos, size, movable, (0.0, 0.0, 50.0, 50.0))
+    assert float(overlap_penalty(out, size)) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_tetris_respects_locked_and_board():
+    from tracewise.place.core import legalize_tetris
+    pos = torch.tensor([[5.0, 5.0], [5.2, 5.0]], dtype=torch.float64)
+    size = torch.tensor([[4.0, 4.0]] * 2, dtype=torch.float64)
+    movable = torch.tensor([False, True])
+    out = legalize_tetris(pos, size, movable, (0.0, 0.0, 20.0, 20.0))
+    assert torch.allclose(out[0], pos[0])  # locked unmoved
+    assert float(overlap_penalty(out, size)) == pytest.approx(0.0, abs=1e-9)
+    assert 2.0 <= float(out[1, 0]) <= 18.0 and 2.0 <= float(out[1, 1]) <= 18.0

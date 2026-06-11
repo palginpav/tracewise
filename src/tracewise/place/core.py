@@ -211,6 +211,61 @@ def legalize(
     return pos
 
 
+def legalize_tetris(
+    pos: torch.Tensor,
+    size: torch.Tensor,
+    movable: torch.Tensor,
+    board,
+    margin: float = 0.2,
+    step: float = 0.25,
+    max_r: float = 12.0,
+) -> torch.Tensor:
+    """Tetris-style legalization in box-center space: components legalize
+    one at a time (largest first), each snapping to the nearest position
+    (expanding ring search) that overlaps nothing already legal. Locked parts
+    are immovable obstacles. Guarantees pairwise-legal boxes where the board
+    has room — the measured gate for routability (overlapping courtyards
+    block routing corridors directly)."""
+    x1, y1, x2, y2 = board
+    half = (size + margin) / 2
+    n = len(pos)
+    out = pos.clone()
+    placed: list[tuple[float, float, float, float]] = []
+    for i in range(n):
+        if not bool(movable[i]):
+            hx, hy = float(half[i, 0]), float(half[i, 1])
+            cx, cy = float(out[i, 0]), float(out[i, 1])
+            placed.append((cx - hx, cy - hy, cx + hx, cy + hy))
+
+    # ring offsets sorted by distance, generated once
+    k = int(max_r / step)
+    offs = sorted(((dx * step, dy * step) for dx in range(-k, k + 1)
+                   for dy in range(-k, k + 1)),
+                  key=lambda o: o[0] * o[0] + o[1] * o[1])
+
+    order = sorted((i for i in range(n) if bool(movable[i])),
+                   key=lambda i: -float(size[i, 0] * size[i, 1]))
+    for i in order:
+        hx, hy = float(half[i, 0]), float(half[i, 1])
+        dx0, dy0 = float(out[i, 0]), float(out[i, 1])
+        placed_ok = False
+        for ox, oy in offs:
+            cx = min(max(dx0 + ox, x1 + hx), x2 - hx)
+            cy = min(max(dy0 + oy, y1 + hy), y2 - hy)
+            r = (cx - hx, cy - hy, cx + hx, cy + hy)
+            if all(r[2] <= q[0] or q[2] <= r[0] or r[3] <= q[1] or q[3] <= r[1]
+                   for q in placed):
+                out[i, 0], out[i, 1] = cx, cy
+                placed.append(r)
+                placed_ok = True
+                break
+        if not placed_ok:
+            hxr, hyr = float(half[i, 0]), float(half[i, 1])
+            cx, cy = float(out[i, 0]), float(out[i, 1])
+            placed.append((cx - hxr, cy - hyr, cx + hxr, cy + hyr))  # leave as-is
+    return out
+
+
 def optimize(
     prob: PlaceProblem,
     iters: int = 800,
@@ -242,7 +297,7 @@ def optimize(
     final = prob.pos0 + delta.detach() * mask
     centers = final + prob.coff
     overlap_global = float(overlap_penalty(centers, prob.size))
-    centers = legalize(centers, prob.size, prob.movable, prob.board)
+    centers = legalize_tetris(centers, prob.size, prob.movable, prob.board)
     final = centers - prob.coff
     return {
         "positions": {r: (float(final[i, 0]), float(final[i, 1]))
