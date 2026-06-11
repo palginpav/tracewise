@@ -31,3 +31,32 @@ pairs and look at the copper** (`~/.cache/tracewise/ablation/<board>/{naked,cons
 hurt tight 4-layer), Freerouting's completion ceiling dominates everything (23–89 unconnected
 on every arm), and each measurement round so far has improved the *tool* (scoring fairness,
 project-minimum clamps, zone-clearance floors) — which is what the harness is for.
+
+## Designer review (the data point that settles it)
+
+The project author (10+ years electronics design) opened both mitayi arms in KiCad and ran
+full GUI DRC. Verdict: **both are poor; naked is the better of the two.** His reports add what
+the harness metrics missed:
+
+- **`track_dangling` dominates** — 48 stubs (one arm) and 35 (other): Freerouting leaves
+  dangling track stubs all over, the single biggest contributor to "this looks awful" that
+  violation counts under-weight
+- GUI DRC counted ~104–108 unconnected items (higher than the CLI's 89 — counting/severity
+  configuration differs between paths; worth unifying in the harness)
+- The arm with *fewer* counted violations was judged *worse* by eye — **DRC counts are not a
+  routing-quality metric**, they're a manufacturability gate
+
+## Consequence for the roadmap
+
+Three measurement rounds and a designer review converge: **the router is the bottleneck, not
+the constraints.** Constraint micro-tuning on top of Freerouting has hit its ceiling on these
+boards. Actions:
+
+1. **Stop tuning constraints for Freerouting** — keep `constrain` (correct, clamped, conditional)
+   as-is; it helps where boards have constraint-sensitive structure and the solver has room
+2. **Post-route cleanup pass** — deleting dangling stubs is a mechanical pcbnew operation and
+   directly attacks the dominant visual defect (quick win, queued)
+3. **Pluggable engine priority up** — Topola (topological, in development) and any future
+   engine slot in behind the same bridge; the DSN/SES plumbing and its battle-hardening carry over
+4. **v0.3 placer becomes the main line** — placement quality constrains routability more than
+   rules do; that was the design doc's thesis and the evidence now backs it
