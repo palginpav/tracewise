@@ -3,8 +3,11 @@
 **AI-assisted place & route for KiCad** — schematic review with datasheet grounding, constraint
 generation for autorouting, and analytical placement. Open source, local-first.
 
-> Status: 🚧 early development — design phase complete, Reviewer module (v0.1) in progress.
-> See [docs/DESIGN.md](docs/DESIGN.md) for the full design and [docs/PLAN.md](docs/PLAN.md) for the roadmap.
+> Status: **v0.1 — the Reviewer works.** `python -m tracewise review board.kicad_sch` produces
+> a findings report from deterministic rules + a local-LLM pass + per-part datasheet checks.
+> Seeded-error benchmark: **1.00 recall / 1.00 precision** in both modes
+> ([scorecards](docs/review-benchmark.md)). Design: [docs/DESIGN.md](docs/DESIGN.md) ·
+> roadmap: [docs/PLAN.md](docs/PLAN.md) · why not kiutils: [docs/spike-0-kiutils.md](docs/spike-0-kiutils.md)
 
 ## The idea
 
