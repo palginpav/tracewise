@@ -8,13 +8,13 @@ measured results per release.
 
 - [x] kiutils round-trip fidelity — **NO-GO** (0/9 clean round-trips on v9 AND v10: board files crash or corrupt, schematics silently drop 8–17% of tokens). Decision: own lossless s-expression layer (docs/spike-0-kiutils.md)
 - [x] Demo-file fetcher (scripts/spike_kiutils.py; official KiCad demos, fetched not committed)
-- [ ] kicad-cli availability strategy for CI (docker image) and for dev machines without KiCad
+- [x] kicad-cli strategy: native or flatpak auto-discovery (find_kicad_cli); flatpak sandbox quirk handled (temp under $HOME, not /tmp); kicad-cli-dependent tests self-skip; CI docker job deferred until Reviewer integration tests exist
 - [x] Lossless s-expression editor core (src/tracewise/sexpr.py): CST with verbatim tokens + trivia; byte-identical round-trip proven on all fetched KiCad v9/v10 demo files; surgical insert/set/remove with inferred indentation
 - **Exit:** ✅ kiutils no-go decided; sexpr core is the v0.1 prerequisite
 
 ## v0.1 — Reviewer
 
-- [ ] Netlist extraction (kicad-cli) + compressed electrical representation (token budget measured)
+- [x] Netlist extraction (kicad-cli → our own sexpr parser) + compressed representation — measured on a real project: 57k → 1.6k tokens (2.8%)
 - [ ] Datasheet RAG corpus for benchmark boards (manifest + downloader pattern)
 - [ ] LLM review pass: findings schema (severity, evidence, datasheet citation, confidence)
 - [ ] Seeded-error benchmark suite + precision/recall scorecard (incl. clean-schematic FP rate)
