@@ -153,3 +153,19 @@ def test_read_project_rules_absent(tmp_path):
     pro = tmp_path / "x.kicad_pro"
     pro.write_text(json.dumps({"net_settings": {}}))
     assert read_project_rules(pro) == {}
+
+
+def test_zone_clearance_floor(tmp_path):
+    from tracewise.route.constraints import read_zone_clearance
+    pcb = tmp_path / "x.kicad_pcb"
+    pcb.write_text("""(kicad_pcb (version 1) (generator "t")
+      (zone (net 1) (net_name "GND") (clearance 0.18))
+      (zone (net 2) (net_name "T") (clearance 0))
+    )""")
+    assert read_zone_clearance(pcb) == 0.18
+    pro = tmp_path / "x.kicad_pro"
+    pro.write_text(json.dumps({"net_settings": {"classes": []}}))
+    summary = generate(NETLIST, BoardSpec(), tmp_path)
+    assert summary["classes"]
+    dru = (tmp_path / "x.kicad_dru").read_text()
+    assert "(constraint clearance (min 0.18mm))" in dru

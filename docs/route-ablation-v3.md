@@ -9,4 +9,4 @@ Same board, all routing stripped, routed twice: with KiCad's stock settings (nak
 | mitayi-pico-d1 | naked | 89 | 4 | 26 | 226.9 |
 | mitayi-pico-d1 | constrained | 89 | 503 | 21 | 211.7 |
 | zuluscsi-pico-oshw | naked | 27 | 488 | 94 | 4031.6 |
-| zuluscsi-pico-oshw | constrained | 21 | 988 | 93 | 3902.1 |
+| zuluscsi-pico-oshw | constrained | 21 | 986 | 93 | 3902.1 |

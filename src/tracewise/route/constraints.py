@@ -171,9 +171,36 @@ def read_project_rules(pro_path: str | Path) -> dict:
         return {}
 
 
+def read_zone_clearance(pcb_path: str | Path) -> float:
+    """Largest zone-local clearance on the board (mm). Copper pours carry their
+    own clearance; classes emitted below it route copper the pour's rules then
+    condemn (track-to-zone violations — found the hard way on a real board)."""
+    from tracewise.sexpr import parse_file
+
+    try:
+        root = parse_file(pcb_path)
+    except (OSError, ValueError):
+        return 0.0
+    best = 0.0
+    for z in root.find_all("zone"):
+        node = z.first("clearance") or (
+            z.first("connect_pads").first("clearance") if z.first("connect_pads") else None
+        )
+        if node and node.arg():
+            try:
+                best = max(best, float(node.arg()))
+            except ValueError:
+                pass
+    return best
+
+
 def clamp_to_project(classes: list[NetClass], project_rules: dict) -> list[NetClass]:
-    """Raise class clearances/widths to at least the project's own minimums."""
-    floor_clr = project_rules.get("min_clearance_mm", 0.0)
+    """Raise class clearances/widths to the project's own effective minimums
+    (design-rule minimums plus the largest zone-local clearance)."""
+    floor_clr = max(
+        project_rules.get("min_clearance_mm", 0.0),
+        project_rules.get("zone_clearance_mm", 0.0),
+    )
     floor_trk = project_rules.get("min_track_mm", 0.0)
     for c in classes:
         c.clearance_mm = max(c.clearance_mm, floor_clr)
@@ -210,7 +237,11 @@ def generate(
     pro = next(iter(project_dir.glob("*.kicad_pro")), None)
     dru_path = None
     if pro is not None:
-        clamp_to_project(classes, read_project_rules(pro))
+        rules = read_project_rules(pro)
+        pcb = next(iter(project_dir.glob("*.kicad_pcb")), None)
+        if pcb is not None:
+            rules["zone_clearance_mm"] = read_zone_clearance(pcb)
+        clamp_to_project(classes, rules)
         patch_kicad_pro(pro, classes)
         dru_path = pro.with_suffix(".kicad_dru")
         dru_path.write_text(emit_dru(classes, spec), encoding="utf-8")
