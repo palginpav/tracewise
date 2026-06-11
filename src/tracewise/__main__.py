@@ -97,7 +97,8 @@ def place(
     typer.echo(
         f"HPWL {result['hpwl_before']:.1f} -> {result['hpwl_after']:.1f} mm "
         f"({100 * (1 - result['hpwl_after'] / max(result['hpwl_before'], 1e-9)):.1f}% better) · "
-        f"overlap {result['overlap_after']:.1f} mm² (initial layout: {result['overlap_initial']:.1f})"
+        f"overlap {result['overlap_after']:.1f} mm² "
+        f"(initial layout: {result['overlap_initial']:.1f})"
     )
     if apply:
         apply_positions(board, result["positions"])
