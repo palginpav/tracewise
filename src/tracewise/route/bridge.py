@@ -1,0 +1,174 @@
+"""The external-router bridge: DSN export → Freerouting → SES import → DRC.
+
+KiCad exposes no API to its interactive router, so this is the canonical
+path (the same one KiCad's own Freerouting plugin uses):
+
+1. export Specctra DSN from the board — via pcbnew's Python inside KiCad's
+   own runtime (flatpak `--command=python3` or native python3 with pcbnew)
+2. run the Freerouting JAR headless (Java 17+; the JAR is fetched once and
+   cached under ~/.cache/tracewise)
+3. import the resulting SES back into the board and refill zones
+4. score the result with `kicad-cli pcb drc --format json`
+
+Every step shells out — deliberately. The KiCad-side scripts are tiny and
+run inside KiCad's environment, so SWIG version drift stays KiCad's problem,
+not a linkage problem in our process.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import httpx
+
+from tracewise.netlist import find_kicad_cli
+
+FREEROUTING_VERSION = "2.2.4"
+FREEROUTING_URL = (
+    "https://github.com/freerouting/freerouting/releases/download/"
+    f"v{FREEROUTING_VERSION}/freerouting-{FREEROUTING_VERSION}.jar"
+)
+CACHE = Path.home() / ".cache" / "tracewise"
+
+
+class BridgeError(RuntimeError):
+    pass
+
+
+# --- kicad python (pcbnew) discovery -----------------------------------------
+
+
+def find_kicad_python() -> list[str] | None:
+    """Command prefix for a python that can `import pcbnew`."""
+    candidates = []
+    if shutil.which("python3"):
+        candidates.append(["python3"])
+    if shutil.which("flatpak"):
+        candidates.append(["flatpak", "run", "--command=python3", "org.kicad.KiCad"])
+    for cmd in candidates:
+        probe = subprocess.run(
+            [*cmd, "-c", "import pcbnew"], capture_output=True, text=True
+        )
+        if probe.returncode == 0:
+            return cmd
+    return None
+
+
+def _run_pcbnew_script(script: str, timeout: int = 300) -> str:
+    py = find_kicad_python()
+    if py is None:
+        raise BridgeError("no python with pcbnew found (native or flatpak KiCad)")
+    res = subprocess.run([*py, "-c", script], capture_output=True, text=True, timeout=timeout)
+    if res.returncode != 0:
+        raise BridgeError(f"pcbnew script failed: {res.stderr.strip()[:400]}")
+    return res.stdout
+
+
+def export_dsn(board: str | Path, dsn_out: str | Path) -> Path:
+    """Specctra DSN export. Paths must be visible to the (possibly sandboxed)
+    KiCad runtime — keep them under $HOME."""
+    board, dsn_out = Path(board).resolve(), Path(dsn_out).resolve()
+    _run_pcbnew_script(
+        "import pcbnew; "
+        f"b = pcbnew.LoadBoard({str(board)!r}); "
+        f"ok = pcbnew.ExportSpecctraDSN(b, {str(dsn_out)!r}); "
+        "raise SystemExit(0 if ok else 1)"
+    )
+    if not dsn_out.exists():
+        raise BridgeError("DSN export produced no file")
+    return dsn_out
+
+
+def import_ses(board: str | Path, ses: str | Path) -> None:
+    """Import a Specctra session back into the board and refill zones."""
+    board, ses = Path(board).resolve(), Path(ses).resolve()
+    _run_pcbnew_script(
+        "import pcbnew; "
+        f"b = pcbnew.LoadBoard({str(board)!r}); "
+        f"ok = pcbnew.ImportSpecctraSES(b, {str(ses)!r}); "
+        "filler = pcbnew.ZONE_FILLER(b); "
+        "filler.Fill(b.Zones()); "
+        f"pcbnew.SaveBoard({str(board)!r}, b); "
+        "raise SystemExit(0 if ok else 1)"
+    )
+
+
+# --- freerouting ---------------------------------------------------------------
+
+
+def fetch_freerouting() -> Path:
+    jar = CACHE / f"freerouting-{FREEROUTING_VERSION}.jar"
+    if jar.exists():
+        return jar
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with httpx.Client(timeout=120, follow_redirects=True) as c:
+        r = c.get(FREEROUTING_URL)
+        r.raise_for_status()
+        jar.write_bytes(r.content)
+    return jar
+
+
+def run_freerouting(dsn: str | Path, ses_out: str | Path, timeout_s: int = 1800) -> Path:
+    if not shutil.which("java"):
+        raise BridgeError("java not found (Freerouting needs Java 17+)")
+    jar = fetch_freerouting()
+    dsn, ses_out = Path(dsn).resolve(), Path(ses_out).resolve()
+    res = subprocess.run(
+        ["java", "-jar", str(jar), "-de", str(dsn), "-do", str(ses_out), "-da"],
+        capture_output=True, text=True, timeout=timeout_s,
+    )
+    if not ses_out.exists():
+        raise BridgeError(f"freerouting produced no session: {res.stderr.strip()[:400]}")
+    return ses_out
+
+
+# --- DRC ------------------------------------------------------------------------
+
+
+def run_drc(board: str | Path) -> dict:
+    """kicad-cli DRC, parsed JSON. Returns the report dict."""
+    cli = find_kicad_cli()
+    if cli is None:
+        raise BridgeError("kicad-cli not found")
+    board = Path(board).resolve()
+    out = board.parent / f"{board.stem}.drc.json"
+    res = subprocess.run(
+        [*cli, "pcb", "drc", "--format", "json", "--severity-error", "--severity-warning",
+         "-o", str(out), str(board)],
+        capture_output=True, text=True,
+    )
+    if not out.exists():
+        raise BridgeError(f"DRC produced no report: {res.stderr.strip()[:300]}")
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def drc_summary(report: dict) -> dict:
+    violations = report.get("violations", [])
+    by_sev: dict[str, int] = {}
+    for v in violations:
+        by_sev[v.get("severity", "?")] = by_sev.get(v.get("severity", "?"), 0) + 1
+    unconnected = report.get("unconnected_items", [])
+    return {
+        "violations": len(violations),
+        "by_severity": by_sev,
+        "unconnected": len(unconnected),
+    }
+
+
+# --- the loop --------------------------------------------------------------------
+
+
+def route_board(board: str | Path, workdir: str | Path | None = None) -> dict:
+    """DSN → Freerouting → SES → zones → DRC. Returns a summary dict."""
+    board = Path(board).resolve()
+    work = Path(workdir) if workdir else board.parent
+    dsn = work / f"{board.stem}.dsn"
+    ses = work / f"{board.stem}.ses"
+    export_dsn(board, dsn)
+    run_freerouting(dsn, ses)
+    import_ses(board, ses)
+    report = run_drc(board)
+    return {"board": str(board), "drc": drc_summary(report)}

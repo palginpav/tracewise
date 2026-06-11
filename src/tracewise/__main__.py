@@ -47,5 +47,34 @@ def review(
     raise typer.Exit(1 if c["error"] else 0)
 
 
+@app.command()
+def constrain(
+    schematic: Path = typer.Argument(..., help="Path to .kicad_sch"),
+) -> None:
+    """Generate net classes + design rules from the netlist and tracewise.yaml."""
+    from tracewise.boardspec import BoardSpec
+    from tracewise.netlist import export_netlist, parse_netlist
+    from tracewise.route.constraints import generate
+
+    nl = parse_netlist(export_netlist(schematic))
+    spec = BoardSpec.for_project(schematic.parent)
+    summary = generate(nl, spec, schematic.parent)
+    typer.echo(f"classes: {summary['classes']}")
+    typer.echo(f"patched: {summary['kicad_pro']}")
+    typer.echo(f"rules:   {summary['kicad_dru']}")
+
+
+@app.command()
+def route(
+    board: Path = typer.Argument(..., help="Path to .kicad_pcb"),
+) -> None:
+    """Route via Freerouting (DSN/SES bridge) and report DRC."""
+    from tracewise.route.bridge import route_board
+
+    summary = route_board(board)
+    typer.echo(f"DRC: {summary['drc']}")
+    raise typer.Exit(1 if summary["drc"]["violations"] else 0)
+
+
 if __name__ == "__main__":
     app()

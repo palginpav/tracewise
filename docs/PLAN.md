@@ -23,10 +23,10 @@ measured results per release.
 
 ## v0.2 — Constraints + Router bridge
 
-- [ ] Stack-up/board spec input (`tracewise.yaml`)
-- [ ] LLM constraint generation → `.kicad_dru` + DSN rules (net classes, diff pairs, length groups)
-- [ ] Freerouting bridge (DSN export → route → SES import) + zone refill
-- [ ] DRC-iterate loop (kicad-cli JSON)
+- [x] Board spec input (`tracewise.yaml` → BoardSpec, sane defaults)
+- [x] Constraint generation: deterministic classification (power by name+pintype, diff pairs by suffix matching incl. +/-, slow buses) → net classes patched into .kicad_pro + .kicad_dru rules; LLM refinement pass deferred to a later iteration
+- [x] Freerouting bridge: DSN export + SES import via pcbnew inside KiCad's runtime (flatpak-aware), Freerouting 2.2.4 JAR auto-fetched/cached, zone refill on import
+- [x] DRC scoring via kicad-cli JSON (summary: violations/severity/unconnected); iterate loop = ablation work
 - [ ] Ablation: constrained vs naked Freerouting on the benchmark suite — the headline table
 - **Exit:** measurable routing-quality delta from generated constraints
 
