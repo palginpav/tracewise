@@ -80,5 +80,29 @@ def route(
     raise typer.Exit(1 if summary["drc"]["violations"] else 0)
 
 
+@app.command()
+def place(
+    board: Path = typer.Argument(..., help="Path to .kicad_pcb"),
+    apply: bool = typer.Option(False, "--apply", help="Write optimized positions back"),
+    iters: int = typer.Option(800, "--iters"),
+    lock: str = typer.Option("", "--lock", help="comma-separated refs to lock"),
+) -> None:
+    """Analytical placement: optimize footprint positions (dry-run by default)."""
+    from tracewise.place.core import build_problem, optimize
+    from tracewise.place.extract import apply_positions, extract
+
+    data = extract(board)
+    prob = build_problem(data, lock_refs={r.strip() for r in lock.split(",") if r.strip()})
+    result = optimize(prob, iters=iters)
+    typer.echo(
+        f"HPWL {result['hpwl_before']:.1f} -> {result['hpwl_after']:.1f} mm "
+        f"({100 * (1 - result['hpwl_after'] / max(result['hpwl_before'], 1e-9)):.1f}% better) · "
+        f"residual overlap {result['overlap_after']:.2f} mm²"
+    )
+    if apply:
+        apply_positions(board, result["positions"])
+        typer.echo(f"applied {len(result['positions'])} positions to {board}")
+
+
 if __name__ == "__main__":
     app()

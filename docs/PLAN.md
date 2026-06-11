@@ -31,11 +31,21 @@ measured results per release.
 - [ ] Fair DRC scoring across arms (identical rule set) + suite growth
 - **Exit:** measurable routing-quality delta from generated constraints
 
+## Router strategy note (post-ablation)
+
+Freerouting cannot meet the quality bar (designer-reviewed: dangling stubs, poor completion).
+Pluggable engines stay the near-term path (Topola when ready), and **an own router is now an
+acknowledged roadmap candidate** (v0.5+): the DSN/SES bridge, sexpr core, and DRC scoring
+harness are router-agnostic and carry over. Scope honestly: grid/A* push-and-shove for
+2-layer-class boards first, not a universal router. Decision deferred until after the placer —
+better placement may move the routability needle more cheaply.
+
 ## v0.3 — Placer
 
-- [ ] Analytical gradient-descent core (torch) with PCB cost terms
+- [x] Analytical gradient-descent core (torch, CPU): smooth-HPWL (logsumexp, annealed) + soft courtyard overlap (annealed) + boundary + decoupling-proximity terms; locked parts respected. Live: mitayi HPWL −23.7% in 7.5 s — with residual overlap honestly flagged (legalization pass = next)
 - [ ] LLM functional-block clustering pre-pass
-- [ ] IPC API application into live KiCad session; lock-and-rerun
+- [x] Apply path via pcbnew script (consistent with bridge); `tracewise place [--apply] [--lock refs]`
+- [ ] Legalization pass (overlap-free final positions) — required before placement claims are comparable to human layouts
 - [ ] Placement metrics vs human layouts on benchmark boards
 - **Exit:** competitive wirelength + constraint satisfaction on benchmarks
 
