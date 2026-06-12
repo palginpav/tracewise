@@ -106,6 +106,10 @@ better placement may move the routability needle more cheaply.
   excluded — zone-connected; escape-aware), only dual-endorsed fixes applied, router
   judges, keep-best protects. Two T3-verified moves over 5 rounds → 63→61→56.
   Note: errors 88 at best state (vs 81) — score is lexicographic; error trend to watch.
+  Deep run (10 iters, 12 cands, 8-dir nudges): converged at 56 — no further dual-endorsed
+  fixes exist in the single-small-part move space. Next levers: multi-part candidates,
+  larger displacements, error-targeted candidates, or accept 56 and re-run R4 for the
+  public table.
 - [~] ECCF integration round 1 (superseded): T2-only candidate screening in the auto loop —
   measured insufficient (moves T2 approved still cost pad-completion elsewhere, 63 held
   by rollback; errors improved 82→59). Consistent with the funnel design: T2 is the

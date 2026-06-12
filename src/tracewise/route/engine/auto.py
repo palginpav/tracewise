@@ -22,7 +22,7 @@ from tracewise.route.bridge import drc_summary, run_drc
 from tracewise.route.engine.kicad import route_board_engine
 
 
-def eccf_candidates(board: Path, failed_nets: set[str], max_cands: int = 8):
+def eccf_candidates(board: Path, failed_nets: set[str], max_cands: int = 12):
     """Candidate single-part fixes for failing nets: 90-degree rotations and
     trust-region nudges of small parts, screened by validated T2 scoring
     (docs/PLACE-ROUTE-COUPLING.md gates: V1 100%, V2 rho 0.579)."""
@@ -36,12 +36,13 @@ def eccf_candidates(board: Path, failed_nets: set[str], max_cands: int = 8):
             continue
         if any(p["net"] in failed_nets for p in fp["pads"]):
             parts.append(fp)
-    parts = parts[:3]  # few parts, several moves each
+    parts = parts[:4]  # few parts, several moves each
     cands = []
     for fp in parts:
         ref = fp["ref"]
         cands.append((ref, fp["x"], fp["y"], 90.0))  # rotation
-        for dx, dy in ((1.5, 0), (-1.5, 0), (0, 1.5), (0, -1.5)):
+        for dx, dy in ((1.5, 0), (-1.5, 0), (0, 1.5), (0, -1.5),
+                       (1.5, 1.5), (-1.5, 1.5), (1.5, -1.5), (-1.5, -1.5)):
             cands.append((ref, fp["x"] + dx, fp["y"] + dy, 0.0))
     cands = cands[:max_cands]
 
