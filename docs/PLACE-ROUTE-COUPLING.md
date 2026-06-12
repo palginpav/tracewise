@@ -331,12 +331,18 @@ measured, isolated failure that no local model can express.
 
 - **V1 — PASS, 100%** (41/41 orientable parts recover the human orientation in
   top-2; bar was 70%). The escape-direction signal is real on real boards.
-- **V2 — 0.452, below the 0.5 bar, verdict INCONCLUSIVE:** 14/18 trials scored
-  an exact 0.0 ECCF delta and the rest ±SEAL — the harness's T2 window
-  saturates to SEAL on dense real boards because it does not model the
-  router's escape allowance (the documented known limit, observed exactly as
-  predicted). A saturated signal cannot rank. Action: add two-tier halo
-  passability (hard vs halo, mirroring the router's escape) inside the T2
-  window, then re-run V2 before any integration decision.
+- **V2 — PASS, rho = 0.579** (bar 0.5; 20/20 valid trials). Two fidelity fixes
+  were needed to unsaturate the signal on a real dense board, both mirroring
+  router semantics: (1) escape-aware window passability (halo cells passable
+  within the router's endpoint allowance), and (2) — the decisive one — the
+  net's OWN pads carved before T1 field build: seeds otherwise sit inside
+  their own halos and every field is infinite (14/18 exact-zero deltas in the
+  saturated run). With the live signal, the worst routed outcome (+23
+  unconnected) received the largest ECCF delta (51.5), and the three worst
+  outcomes map to three of the four largest deltas.
+
+**Integration is green-lit:** T2 (with net-carved fields + escape-aware
+windows) screens rotation v3 and arm-2 nudge candidates; exit criteria
+unchanged (V3 <= 89, V4 <= 84 on mitayi).
 - Side capture: a deterministic engine crash (TypeError in A* heuristic)
   reproduces in isolation at V2 trial 16 — filed for forensics.

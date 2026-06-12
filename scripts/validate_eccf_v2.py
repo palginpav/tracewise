@@ -32,8 +32,16 @@ SRC = Path("data/benchmark-boards/mitayi-pico-d1")
 WORK = Path.home() / ".cache" / "tracewise" / "eccf-v2"
 
 
+ESCAPE_CELLS = 12  # mirror the router's endpoint escape allowance
+
+
 def t2_score(board: str | Path, refs: set[str]) -> float:
-    """Sum of T2 escape scores over the given parts' pads (own pads carved)."""
+    """Sum of T2 escape scores over the given parts' pads (own pads carved).
+
+    Escape-aware: within ESCAPE_CELLS of the pad, clearance-halo cells (blocked
+    but copper-free) are passable — mirroring the router's escape allowance.
+    Without this the window seals on dense boards and the signal saturates
+    (measured: 14/18 zero deltas in the first V2 run)."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, _, _ = build_problem(data, track_mm=geo["track_mm"],
@@ -43,6 +51,7 @@ def t2_score(board: str | Path, refs: set[str]) -> float:
     for ref in refs:
         pads = [p for p in data["pads"] if p["ref"] == ref]
         g = grid.cells.copy()
+        hard = grid.hard.copy()
         for p in pads:
             for lay in ([0] if p["front"] else []) + ([1] if p["back"] else []):
                 y1 = int((p["y"] - p["hh"] - inflate - grid.y0) / grid.pitch)
@@ -50,22 +59,44 @@ def t2_score(board: str | Path, refs: set[str]) -> float:
                 x1 = int((p["x"] - p["hw"] - inflate - grid.x0) / grid.pitch)
                 x2 = int(np.ceil((p["x"] + p["hw"] + inflate - grid.x0) / grid.pitch))
                 g[lay, max(0, y1):y2 + 1, max(0, x1):x2 + 1] = 0
+                hard[lay, max(0, y1):y2 + 1, max(0, x1):x2 + 1] = 0
         free = g == 0
+        halo_ok = hard == 0
         for p in pads:
             if not p["net"]:
                 continue
             seeds = []
-            for q in data["pads"]:
-                if q["net"] == p["net"] and q["ref"] != ref:
-                    cell = grid.clamp_cell(*grid.to_cell(q["x"], q["y"]))
-                    seeds += [(lay, *cell) for lay in
-                              ([0] if q["front"] else []) + ([1] if q["back"] else [])]
+            net_pads = [q for q in data["pads"] if q["net"] == p["net"]]
+            # the net's OWN pads must be carved before field build — seeds sit
+            # inside their own halos otherwise and the field saturates to inf
+            # (measured: every stitch returned SEAL on the real board)
+            free_net = g.copy()
+            for q in net_pads:
+                for lay in ([0] if q["front"] else []) + ([1] if q["back"] else []):
+                    qy1 = int((q["y"] - q["hh"] - inflate - grid.y0) / grid.pitch)
+                    qy2 = int(np.ceil((q["y"] + q["hh"] + inflate - grid.y0) / grid.pitch))
+                    qx1 = int((q["x"] - q["hw"] - inflate - grid.x0) / grid.pitch)
+                    qx2 = int(np.ceil((q["x"] + q["hw"] + inflate - grid.x0) / grid.pitch))
+                    free_net[lay, max(0, qy1):qy2 + 1, max(0, qx1):qx2 + 1] = 0
+            free_n = free_net == 0
+            for q in net_pads:
+                if q["ref"] == ref:
+                    continue
+                cell = grid.clamp_cell(*grid.to_cell(q["x"], q["y"]))
+                seeds += [(lay, *cell) for lay in
+                          ([0] if q["front"] else []) + ([1] if q["back"] else [])]
             if not seeds:
                 continue
-            field = build_field(free, seeds)
+            field = build_field(free_n, seeds)
             cell = grid.clamp_cell(*grid.to_cell(p["x"], p["y"]))
             lay = 0 if p["front"] else 1
-            total += min(stitch(free, (lay, *cell), field), 1e6)
+            # escape-aware window passability around this pad
+            cy, cx = cell
+            esc = np.zeros_like(free)
+            y1e, y2e = max(0, cy - ESCAPE_CELLS), cy + ESCAPE_CELLS + 1
+            x1e, x2e = max(0, cx - ESCAPE_CELLS), cx + ESCAPE_CELLS + 1
+            esc[:, y1e:y2e, x1e:x2e] = halo_ok[:, y1e:y2e, x1e:x2e]
+            total += min(stitch(free_n | esc, (lay, *cell), field), 1e6)
     return total
 
 
