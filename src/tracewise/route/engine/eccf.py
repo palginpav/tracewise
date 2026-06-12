@@ -8,6 +8,7 @@ occupancy, net-own-pad carving, endpoint escape allowance.
 
 from __future__ import annotations
 
+import heapq
 import math
 from pathlib import Path
 
@@ -16,6 +17,8 @@ import numpy as np
 from tracewise.route.engine.kicad import build_problem, extract_pads, project_geometry
 
 VIA_COST = 10.0
+HW = 3  # track halfwidth+clearance cells
+VIA_HW = 5
 SEAL = 1e4
 DIRS8 = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
          (-1, -1, math.sqrt(2)), (-1, 1, math.sqrt(2)),
@@ -169,3 +172,147 @@ def t2_score(board: str | Path, refs: set[str]) -> float:
     return total
 
 
+
+
+def field_at(field: np.ndarray, f: int, lay: int, iy: int, ix: int) -> float:
+    if f == 1:
+        return float(field[lay, iy, ix])
+    cy = min(iy // f, field.shape[1] - 1)
+    cx = min(ix // f, field.shape[2] - 1)
+    return float(field[lay, cy, cx])
+
+
+# --------------------------------------------------------------------------
+# T2 — escape stitch (per-candidate, bounded local Dijkstra onto the field)
+# --------------------------------------------------------------------------
+
+
+
+def pseudo_route(free: np.ndarray, start: tuple[int, int, int],
+                 goals: set[tuple[int, int, int]], field: np.ndarray,
+                 reserved: np.ndarray, f: int = 1, via_cost: float = VIA_COST,
+                 cap: int = 40000) -> tuple[list | None, float, int]:
+    """One-shot A*, h = cached field (admissible: reservations only ADD cost).
+    Returns (path, geometric_cost, expansions)."""
+    L, H, W = free.shape
+
+    def h(node):
+        return field_at(field, f, *node)
+
+    g0 = 0.0
+    pq = [(h(start), g0, 0.0, start)]
+    came: dict = {start: None}
+    gs = {start: 0.0}
+    exp = 0
+    while pq:
+        _, g, geo, node = heapq.heappop(pq)
+        if g > gs.get(node, math.inf):
+            continue
+        if node in goals:
+            path = []
+            cur = node
+            while cur is not None:
+                path.append(cur)
+                cur = came[cur]
+            return path[::-1], geo, exp
+        exp += 1
+        if exp > cap:
+            return None, math.inf, exp
+        lay, iy, ix = node
+        nbrs = []
+        for dy, dx, c in DIRS8:
+            ny, nx = iy + dy, ix + dx
+            if 0 <= ny < H and 0 <= nx < W:
+                nxt = (lay, ny, nx)
+                if nxt in goals or free[lay, ny, nx]:
+                    nbrs.append((nxt, c))
+        if free[:, iy, ix].all():
+            nbrs.append(((1 - lay, iy, ix), via_cost))
+        for nxt, c in nbrs:
+            ng = g + c + float(reserved[nxt])
+            if ng < gs.get(nxt, math.inf):
+                gs[nxt] = ng
+                came[nxt] = node
+                heapq.heappush(pq, (ng + h(nxt), ng, geo + c, nxt))
+    return None, math.inf, exp
+
+
+def reserve(reserved: np.ndarray, path: list, hw: int = HW,
+            amount: float = 1000.0) -> None:
+    """Splat a pseudo-routed net into the shared reservation map (the same
+    halfwidth the router marks); layer transitions reserve a via disc."""
+    L, H, W = reserved.shape
+    for (a, b) in zip(path, path[1:], strict=False):
+        if a[0] != b[0]:
+            iy, ix = a[1], a[2]
+            reserved[:, max(0, iy - VIA_HW):iy + VIA_HW + 1,
+                     max(0, ix - VIA_HW):ix + VIA_HW + 1] = amount
+    for lay, iy, ix in path:
+        reserved[lay, max(0, iy - hw):iy + hw + 1,
+                 max(0, ix - hw):ix + hw + 1] = amount
+
+
+def _carve(arr, pads, grid, inflate):
+    for q in pads:
+        for lay in ([0] if q["front"] else []) + ([1] if q["back"] else []):
+            y1 = int((q["y"] - q["hh"] - inflate - grid.y0) / grid.pitch)
+            y2 = int(np.ceil((q["y"] + q["hh"] + inflate - grid.y0) / grid.pitch))
+            x1 = int((q["x"] - q["hw"] - inflate - grid.x0) / grid.pitch)
+            x2 = int(np.ceil((q["x"] + q["hw"] + inflate - grid.x0) / grid.pitch))
+            arr[lay, max(0, y1):y2 + 1, max(0, x1):x2 + 1] = 0
+
+
+def t3_verify(board: str | Path, nets: set[str]) -> tuple[float, int]:
+    """T3: field-guided sequential pseudo-route of the given nets with shared
+    reservations — prices zero-sum corridor capacity that per-part T2 cannot
+    see (the spike's scenario B; the round-1 integration lesson). Returns
+    (total geometric cost, failed pad connections)."""
+    data = extract_pads(board)
+    geo = project_geometry(board)
+    grid, _, _ = build_problem(data, track_mm=geo["track_mm"],
+                               clearance_mm=geo["clearance_mm"])
+    inflate = geo["track_mm"] / 2 + geo["clearance_mm"]
+    reserved = np.zeros_like(grid.cells, dtype=np.float64)
+    total, fails = 0.0, 0
+    for net in sorted(nets):
+        net_pads = [q for q in data["pads"] if q["net"] == net]
+        if len(net_pads) < 2 or len(net_pads) > 10:
+            continue  # pour-class nets (GND etc.) connect by zone, not corridor
+        free_net = grid.cells.copy()
+        _carve(free_net, net_pads, grid, inflate)
+        free = free_net == 0
+        halo_ok = grid.hard == 0
+        cells = []
+        for q in net_pads:
+            cell = grid.clamp_cell(*grid.to_cell(q["x"], q["y"]))
+            for lay in ([0] if q["front"] else []) + ([1] if q["back"] else []):
+                cells.append((lay, *cell))
+        tree = {cells[0]}
+        for pad in cells[1:]:
+            if pad in tree:
+                continue
+            # escape-aware near the pad (mirrors the router and T2)
+            esc = np.zeros_like(free)
+            cy, cx = pad[1], pad[2]
+            y1e, y2e = max(0, cy - 12), cy + 13
+            x1e, x2e = max(0, cx - 12), cx + 13
+            esc[:, y1e:y2e, x1e:x2e] = halo_ok[:, y1e:y2e, x1e:x2e]
+            free_esc = free | esc
+            field = build_field(free_esc, list(tree))
+            path, cost, _ = pseudo_route(free_esc, pad, tree, field, reserved,
+                                         cap=8000)
+            if path is None:
+                fails += 1
+                total += SEAL
+                continue
+            total += cost
+            tree.update(path)
+            for (a, b) in zip(path, path[1:], strict=False):
+                if a[0] != b[0]:
+                    iy, ix = a[1], a[2]
+                    reserved[:, max(0, iy - VIA_HW):iy + VIA_HW + 1,
+                             max(0, ix - VIA_HW):ix + VIA_HW + 1] = 1000.0
+            for lay, iy, ix in path:
+                reserved[lay, max(0, iy - HW):iy + HW + 1,
+                         max(0, ix - HW):ix + HW + 1] = 1000.0
+    return total, fails

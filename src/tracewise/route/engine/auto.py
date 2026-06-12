@@ -101,13 +101,26 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
             stubborn = {n for n, c in persist.items() if c >= it}
             if stubborn:
                 from tracewise.place.extract import apply_positions
+                from tracewise.route.engine.eccf import t3_verify
 
                 scored = eccf_candidates(board, stubborn)
-                if scored and scored[0][0] < -1.0:  # apply best if T2 improves
-                    delta, ref, nx, ny, rot = scored[0]
-                    apply_positions(board, {ref: (nx, ny, rot)})
-                    moved = 1
-                    pristine = board.read_bytes()
+                screened = [c for c in scored if c[0] < -1.0][:3]  # T2 screen
+                if screened:
+                    base_cost, base_fail = t3_verify(board, stubborn)
+                    pick = None
+                    for _delta, ref, nx, ny, rot in screened:
+                        apply_positions(board, {ref: (nx, ny, rot)})
+                        cost, fail = t3_verify(board, stubborn)
+                        board.write_bytes(pristine)
+                        key = (fail, cost)
+                        improves = key < (base_fail, base_cost)
+                        if improves and (pick is None or key < pick[0]):
+                            pick = (key, ref, nx, ny, rot)
+                    if pick:  # T3-verified improvement only
+                        _, ref, nx, ny, rot = pick
+                        apply_positions(board, {ref: (nx, ny, rot)})
+                        moved = 1
+                        pristine = board.read_bytes()
         summary = route_board_engine(board, priority=priority,
                                      ripup_factor=8 + 4 * it)
         drc = drc_summary(run_drc(board))
