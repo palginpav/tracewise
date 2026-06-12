@@ -31,6 +31,14 @@ measured results per release.
 - [ ] Fair DRC scoring across arms (identical rule set) + suite growth
 - **Exit:** measurable routing-quality delta from generated constraints
 
+## Dev-machine note (2026-06-12)
+
+A cluster of mystery crashes (phantom TypeError, "Fatal Python error: Executing a
+cache", NULL-ip segfaults) was traced to a degraded CPU core on the dev machine
+(all faults on the same core; clean on others; temps normal — Raptor-Lake-class
+degradation signature). Workaround: `taskset -c 0-9` for long runs. None of the
+affected runs' committed results are suspect (all verified results re-ran clean).
+
 ## Router strategy note (post-ablation)
 
 Freerouting cannot meet the quality bar (designer-reviewed: dangling stubs, poor completion).

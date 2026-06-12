@@ -107,15 +107,16 @@ def stitch(free: np.ndarray, start: tuple[int, int, int], field: np.ndarray,
 ESCAPE_CELLS = 12  # mirror the router's endpoint escape allowance
 
 
-def t2_score(board: str | Path, refs: set[str]) -> float:
+def t2_score(board: str | Path, refs: set[str], data: dict | None = None,
+             geo: dict | None = None) -> float:
     """Sum of T2 escape scores over the given parts' pads (own pads carved).
 
     Escape-aware: within ESCAPE_CELLS of the pad, clearance-halo cells (blocked
     but copper-free) are passable — mirroring the router's escape allowance.
     Without this the window seals on dense boards and the signal saturates
     (measured: 14/18 zero deltas in the first V2 run)."""
-    data = extract_pads(board)
-    geo = project_geometry(board)
+    data = data or extract_pads(board)
+    geo = geo or project_geometry(board)
     grid, _, _ = build_problem(data, track_mm=geo["track_mm"],
                                clearance_mm=geo["clearance_mm"])
     inflate = geo["track_mm"] / 2 + geo["clearance_mm"]
@@ -316,3 +317,23 @@ def t3_verify(board: str | Path, nets: set[str]) -> tuple[float, int]:
                 reserved[lay, max(0, iy - HW):iy + HW + 1,
                          max(0, ix - HW):ix + HW + 1] = 1000.0
     return total, fails
+
+
+def patch_data(data: dict, ref: str, nx: float, ny: float, rot: float) -> dict:
+    """Candidate evaluation without board writes: shift (and optionally rotate
+    90 degrees about the pad centroid) one part's pads in extracted data."""
+    import copy
+
+    out = copy.deepcopy(data)
+    pads = [p for p in out["pads"] if p["ref"] == ref]
+    if not pads:
+        return out
+    cx = sum(p["x"] for p in pads) / len(pads)
+    cy = sum(p["y"] for p in pads) / len(pads)
+    for p in pads:
+        dx, dy = p["x"] - cx, p["y"] - cy
+        if rot:
+            dx, dy = dy, -dx  # +90 KiCad, verified
+            p["hw"], p["hh"] = p["hh"], p["hw"]
+        p["x"], p["y"] = nx + dx, ny + dy
+    return out

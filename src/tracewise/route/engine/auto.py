@@ -22,42 +22,57 @@ from tracewise.route.bridge import drc_summary, run_drc
 from tracewise.route.engine.kicad import route_board_engine
 
 
-def eccf_candidates(board: Path, failed_nets: set[str], max_cands: int = 12):
-    """Candidate single-part fixes for failing nets: 90-degree rotations and
-    trust-region nudges of small parts, screened by validated T2 scoring
-    (docs/PLACE-ROUTE-COUPLING.md gates: V1 100%, V2 rho 0.579)."""
+def eccf_candidates(board: Path, failed_nets: set[str],
+                    error_sites: list | None = None):
+    """Candidate fixes screened by validated T2 (data-level: extract once,
+    patch pad coords per candidate — no board writes). Sources: small parts on
+    failing nets AND parts near DRC violation sites; menu: rotation + 1.5mm
+    8-dir + 3.0mm 4-dir nudges. Returns sorted (delta, [(ref,x,y,rot),...])."""
     from tracewise.place.extract import extract
-    from tracewise.route.engine.eccf import t2_score
+    from tracewise.route.engine.eccf import patch_data, t2_score
+    from tracewise.route.engine.kicad import extract_pads, project_geometry
 
     data = extract(board)
-    parts = []
+    rdata = extract_pads(board)
+    geo = project_geometry(board)
+    parts, seen = [], set()
     for fp in data["footprints"]:
-        if fp["locked"] or len(fp["pads"]) > 4:
+        if fp["locked"] or len(fp["pads"]) > 4 or fp["ref"] in seen:
             continue
-        if any(p["net"] in failed_nets for p in fp["pads"]):
+        near_err = error_sites and any(
+            abs(fp["x"] - ex) < 1.5 and abs(fp["y"] - ey) < 1.5
+            for ex, ey in error_sites)
+        if near_err or any(p["net"] in failed_nets for p in fp["pads"]):
             parts.append(fp)
-    parts = parts[:4]  # few parts, several moves each
+            seen.add(fp["ref"])
+    parts = parts[:6]
     cands = []
     for fp in parts:
         ref = fp["ref"]
-        cands.append((ref, fp["x"], fp["y"], 90.0))  # rotation
-        for dx, dy in ((1.5, 0), (-1.5, 0), (0, 1.5), (0, -1.5),
-                       (1.5, 1.5), (-1.5, 1.5), (1.5, -1.5), (-1.5, -1.5)):
-            cands.append((ref, fp["x"] + dx, fp["y"] + dy, 0.0))
-    cands = cands[:max_cands]
+        cands.append((ref, fp["x"], fp["y"], 90.0))
+        for d, dirs in ((1.5, ((1, 0), (-1, 0), (0, 1), (0, -1),
+                               (1, 1), (-1, 1), (1, -1), (-1, -1))),
+                        (3.0, ((1, 0), (-1, 0), (0, 1), (0, -1)))):
+            for dx, dy in dirs:
+                cands.append((ref, fp["x"] + dx * d, fp["y"] + dy * d, 0.0))
 
-    pristine = board.read_bytes()
     refs = {c[0] for c in cands}
-    base_scores = {r: t2_score(board, {r}) for r in refs}
+    base = {r: t2_score(board, {r}, data=rdata, geo=geo) for r in refs}
     scored = []
-    from tracewise.place.extract import apply_positions
     for ref, nx, ny, rot in cands:
-        apply_positions(board, {ref: (nx, ny, rot)})
-        delta = t2_score(board, {ref}) - base_scores[ref]
-        board.write_bytes(pristine)
-        scored.append((delta, ref, nx, ny, rot))
-    scored.sort()
-    return scored
+        d2 = patch_data(rdata, ref, nx, ny, rot)
+        delta = t2_score(board, {ref}, data=d2, geo=geo) - base[ref]
+        scored.append((delta, [(ref, nx, ny, rot)]))
+    scored.sort(key=lambda s: s[0])
+    # multi-part combos: best two single moves on DIFFERENT parts, applied together
+    singles = [s for s in scored if s[0] < -1.0]
+    combos = []
+    for i, (da, ma) in enumerate(singles[:4]):
+        for db, mb in singles[i + 1:5]:
+            if ma[0][0] != mb[0][0]:
+                combos.append((da + db, ma + mb))
+                break
+    return sorted(scored + combos, key=lambda s: s[0])
 
 
 def nudge_placement(board: Path, failed_nets: set[str], weight: float = 4.0) -> int:
@@ -90,6 +105,7 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
     pristine = board.read_bytes()  # caller provides the stripped board
     priority: dict[str, int] = {}
     persist: dict[str, int] = {}
+    err_sites: list = []
     best: tuple[int, int] | None = None
     best_bytes: bytes | None = None
     history = []
@@ -104,27 +120,34 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                 from tracewise.place.extract import apply_positions
                 from tracewise.route.engine.eccf import t3_verify
 
-                scored = eccf_candidates(board, stubborn)
-                screened = [c for c in scored if c[0] < -1.0][:3]  # T2 screen
+                scored = eccf_candidates(board, stubborn, error_sites=err_sites)
+                screened = [c for c in scored if c[0] < -1.0][:4]  # T2 screen
                 if screened:
                     base_cost, base_fail = t3_verify(board, stubborn)
                     pick = None
-                    for _delta, ref, nx, ny, rot in screened:
-                        apply_positions(board, {ref: (nx, ny, rot)})
+                    for _delta, moves_list in screened:
+                        apply_positions(board, {r: (x, y, ro)
+                                                for r, x, y, ro in moves_list})
                         cost, fail = t3_verify(board, stubborn)
                         board.write_bytes(pristine)
                         key = (fail, cost)
                         improves = key < (base_fail, base_cost)
                         if improves and (pick is None or key < pick[0]):
-                            pick = (key, ref, nx, ny, rot)
+                            pick = (key, moves_list)
                     if pick:  # T3-verified improvement only
-                        _, ref, nx, ny, rot = pick
-                        apply_positions(board, {ref: (nx, ny, rot)})
-                        moved = 1
+                        _, moves_list = pick
+                        apply_positions(board, {r: (x, y, ro)
+                                                for r, x, y, ro in moves_list})
+                        moved = len(moves_list)
                         pristine = board.read_bytes()
         summary = route_board_engine(board, priority=priority,
                                      ripup_factor=8 + 4 * it)
-        drc = drc_summary(run_drc(board))
+        report = run_drc(board)
+        drc = drc_summary(report)
+        err_sites = [(v["items"][0]["pos"]["x"], v["items"][0]["pos"]["y"])
+                     for v in report.get("violations", [])
+                     if v["type"] in ("clearance", "hole_clearance")
+                     and v.get("items")][:20]
         score = (drc["unconnected"], drc["by_severity"].get("error", 0))
         history.append({"iter": it, "routed": f"{summary['routed']}/{summary['nets']}",
                         "unconnected": score[0], "errors": score[1],
