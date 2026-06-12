@@ -115,9 +115,12 @@ better placement may move the routability needle more cheaply.
   judges, keep-best protects. Two T3-verified moves over 5 rounds → 63→61→56.
   Note: errors 88 at best state (vs 81) — score is lexicographic; error trend to watch.
   Deep run (10 iters, 12 cands, 8-dir nudges): converged at 56 — no further dual-endorsed
-  fixes exist in the single-small-part move space. Next levers: multi-part candidates,
-  larger displacements, error-targeted candidates, or accept 56 and re-run R4 for the
-  public table.
+  fixes exist in the single-small-part move space. 3-lever expansion (multi-part combos,
+  3mm tier, error-site candidates; data-level T2 scoring — extract once, patch pads in
+  memory): best 63, NOT 56 — combos crowded the T3 quota out of the proven singles and
+  the router rejected their predicted benefit (T3's no-rip-up blind spot on coordinated
+  moves). Fix queued: separate T3 quotas (top-3 singles + top-1 combo). Candidate-mix
+  sensitivity is now a measured property of the funnel.
 - [~] ECCF integration round 1 (superseded): T2-only candidate screening in the auto loop —
   measured insufficient (moves T2 approved still cost pad-completion elsewhere, 63 held
   by rollback; errors improved 82→59). Consistent with the funnel design: T2 is the
