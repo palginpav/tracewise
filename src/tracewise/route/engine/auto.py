@@ -18,8 +18,45 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tracewise.route.bridge import drc_summary, run_drc, strip_routing
+from tracewise.route.bridge import drc_summary, run_drc
 from tracewise.route.engine.kicad import route_board_engine
+
+
+def eccf_candidates(board: Path, failed_nets: set[str], max_cands: int = 8):
+    """Candidate single-part fixes for failing nets: 90-degree rotations and
+    trust-region nudges of small parts, screened by validated T2 scoring
+    (docs/PLACE-ROUTE-COUPLING.md gates: V1 100%, V2 rho 0.579)."""
+    from tracewise.place.extract import extract
+    from tracewise.route.engine.eccf import t2_score
+
+    data = extract(board)
+    parts = []
+    for fp in data["footprints"]:
+        if fp["locked"] or len(fp["pads"]) > 4:
+            continue
+        if any(p["net"] in failed_nets for p in fp["pads"]):
+            parts.append(fp)
+    parts = parts[:3]  # few parts, several moves each
+    cands = []
+    for fp in parts:
+        ref = fp["ref"]
+        cands.append((ref, fp["x"], fp["y"], 90.0))  # rotation
+        for dx, dy in ((1.5, 0), (-1.5, 0), (0, 1.5), (0, -1.5)):
+            cands.append((ref, fp["x"] + dx, fp["y"] + dy, 0.0))
+    cands = cands[:max_cands]
+
+    pristine = board.read_bytes()
+    refs = {c[0] for c in cands}
+    base_scores = {r: t2_score(board, {r}) for r in refs}
+    scored = []
+    from tracewise.place.extract import apply_positions
+    for ref, nx, ny, rot in cands:
+        apply_positions(board, {ref: (nx, ny, rot)})
+        delta = t2_score(board, {ref}) - base_scores[ref]
+        board.write_bytes(pristine)
+        scored.append((delta, ref, nx, ny, rot))
+    scored.sort()
+    return scored
 
 
 def nudge_placement(board: Path, failed_nets: set[str], weight: float = 4.0) -> int:
@@ -60,14 +97,17 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
     for it in range(max_iters):
         board.write_bytes(pristine)
         if placement_arm and it > 0:
-            # arm 2: components of nets that failed in ALL prior rounds get
-            # re-placed with weighted wirelength before this round routes
+            # arm 2 v2: ECCF-screened single-part fixes for stubborn nets
             stubborn = {n for n, c in persist.items() if c >= it}
             if stubborn:
-                moved = nudge_placement(board, stubborn)
-                strip_routing(board)  # placement nudge leaves no copper edits,
-                # but normalize through pcbnew for a consistent baseline
-                pristine = board.read_bytes()  # nudged placement becomes baseline
+                from tracewise.place.extract import apply_positions
+
+                scored = eccf_candidates(board, stubborn)
+                if scored and scored[0][0] < -1.0:  # apply best if T2 improves
+                    delta, ref, nx, ny, rot = scored[0]
+                    apply_positions(board, {ref: (nx, ny, rot)})
+                    moved = 1
+                    pristine = board.read_bytes()
         summary = route_board_engine(board, priority=priority,
                                      ripup_factor=8 + 4 * it)
         drc = drc_summary(run_drc(board))

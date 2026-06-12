@@ -100,6 +100,11 @@ better placement may move the routability needle more cheaply.
   headroom exists); escape-penalty sweep 2/4/6 → knee at 4.0 (63 unconn + clearance 44→34).
   Engine config frozen for this round: 82 err / 63 unconn / 0 dangling on mitayi (FR: 4/89/0).
   Remaining: via-near-hole spacing (~24), fine-pitch residual shaves. R4 re-run next.
+- [~] ECCF integration round 1: T2-only candidate screening in the auto loop —
+  measured insufficient (moves T2 approved still cost pad-completion elsewhere, 63 held
+  by rollback; errors improved 82→59). Consistent with the funnel design: T2 is the
+  SCREEN; the VERIFY stage (T3 pseudo-route over affected nets) is required to price
+  displaced congestion before applying — that's the documented next step, not a new idea.
 - [~] **Refinement loop (`tracewise auto`)** toward the 0/0 goal: iterate route rounds,
   failed nets gain ordering priority + escalating rip-up, keep-best-with-rollback from
   pristine each round. First measurement (mitayi, 5 iters): routed nets 35→40 but pad-level
