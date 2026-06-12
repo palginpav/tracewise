@@ -34,6 +34,7 @@ for fp in b.GetFootprints():
         back = ls.Contains(pcbnew.B_Cu)
         bb = p.GetBoundingBox()
         pads.append({{
+            "ref": fp.GetReference(),
             "net": p.GetNetname(),
             "x": p.GetPosition().x / IU, "y": p.GetPosition().y / IU,
             "front": bool(front), "back": bool(back),

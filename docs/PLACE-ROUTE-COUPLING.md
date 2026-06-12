@@ -325,3 +325,18 @@ Readings beyond the verdicts:
 **Verdict: build it** — as the funnel in §3, gated by V1/V2 before any placer
 integration, with rotation v3 (V3) as the first consumer because it is the
 measured, isolated failure that no local model can express.
+
+
+## Gate results (real board, mitayi)
+
+- **V1 — PASS, 100%** (41/41 orientable parts recover the human orientation in
+  top-2; bar was 70%). The escape-direction signal is real on real boards.
+- **V2 — 0.452, below the 0.5 bar, verdict INCONCLUSIVE:** 14/18 trials scored
+  an exact 0.0 ECCF delta and the rest ±SEAL — the harness's T2 window
+  saturates to SEAL on dense real boards because it does not model the
+  router's escape allowance (the documented known limit, observed exactly as
+  predicted). A saturated signal cannot rank. Action: add two-tier halo
+  passability (hard vs halo, mirroring the router's escape) inside the T2
+  window, then re-run V2 before any integration decision.
+- Side capture: a deterministic engine crash (TypeError in A* heuristic)
+  reproduces in isolation at V2 trial 16 — filed for forensics.
