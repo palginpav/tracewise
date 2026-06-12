@@ -59,11 +59,19 @@ def find_kicad_python() -> list[str] | None:
     return None
 
 
+WX_PREAMBLE = (
+    "import wx; wx.DisableAsserts(); "  # native KiCad builds with debug
+    # asserts abort probabilistically (PROPERTY_ENUM registration order
+    # depends on hash seed) — harmless, but fatal to a headless subprocess
+)
+
+
 def _run_pcbnew_script(script: str, timeout: int = 300) -> str:
     py = find_kicad_python()
     if py is None:
         raise BridgeError("no python with pcbnew found (native or flatpak KiCad)")
-    res = subprocess.run([*py, "-c", script], capture_output=True, text=True, timeout=timeout)
+    res = subprocess.run([*py, "-c", WX_PREAMBLE + script],
+                         capture_output=True, text=True, timeout=timeout)
     if res.returncode != 0:
         raise BridgeError(f"pcbnew script failed: {res.stderr.strip()[:400]}")
     return res.stdout

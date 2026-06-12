@@ -55,6 +55,10 @@ def route(
     free (pads are blocked for other nets but are this net's targets)."""
     if not goals:
         return RouteResult(False, [], 0.0, "no goals")
+    for g in goals:  # tripwire for a rare unexplained corruption (2 sightings)
+        if not (isinstance(g, tuple) and len(g) == 3):
+            raise AssertionError(f"malformed goal {g!r} of {type(g)}; "
+                                 f"start={start!r} ngoals={len(goals)}")
     sl, sy, sx = start
     if not grid.in_bounds(sy, sx):
         return RouteResult(False, [], 0.0, "start out of bounds")
