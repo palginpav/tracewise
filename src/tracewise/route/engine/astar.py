@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import time
 from dataclasses import dataclass
 
 from tracewise.route.engine.grid import Grid
@@ -47,9 +48,10 @@ def route(
     start: tuple[int, int, int],
     goals: set[tuple[int, int, int]],
     via_cost: float = 10.0,
-    max_expansions: int = 2_000_000,
+    max_expansions: int = 600_000,
     escape: int = 0,
     escape_penalty: float = 4.0,
+    max_seconds: float = 45.0,
 ) -> RouteResult:
     """A* from start to the nearest of `goals`. Cells in `goals` need not be
     free (pads are blocked for other nets but are this net's targets)."""
@@ -79,6 +81,7 @@ def route(
     gscore: dict[tuple[int, int, int], float] = {start: 0.0}
     shaved: set[tuple[int, int, int]] = set()
     expansions = 0
+    deadline = time.monotonic() + max_seconds
 
     while open_q:
         _, g, node = heapq.heappop(open_q)
@@ -96,6 +99,10 @@ def route(
         expansions += 1
         if expansions > max_expansions:
             return RouteResult(False, [], 0.0, "expansion budget exceeded")
+        # cheap per-route wall-clock (checked every 100k expansions): a single
+        # net exploring a large unreachable region must not run for minutes
+        if expansions % 100_000 == 0 and time.monotonic() > deadline:
+            return RouteResult(False, [], 0.0, "route time budget exceeded")
         nl, ny, nx = node
 
         # escape window is GEOMETRIC distance from the endpoints — measuring
