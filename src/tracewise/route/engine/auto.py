@@ -129,11 +129,23 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
     err_sites: list = []
     best: tuple[int, int] | None = None
     best_bytes: bytes | None = None
+    # priority/persist boosts and error sites are part of the BEST state — a
+    # rejected (worse) iteration must not pollute the route ordering of the
+    # next (cross-board validation: a catastrophic trial route boosted ~all
+    # nets and destabilized subsequent routes even after the move was reverted)
+    best_priority: dict[str, int] = {}
+    best_persist: dict[str, int] = {}
+    best_err: list = []
     history = []
     moved = 0
     stall = 0  # rounds since the last improvement; gates the flip escalation
 
     for it in range(max_iters):
+        # restore the route-ordering state that produced the best board, so a
+        # rejected iteration's failures never carry forward
+        priority = dict(best_priority)
+        persist = dict(best_persist)
+        err_sites = list(best_err)
         # always explore from the BEST board so far — never a mutable running
         # baseline. A placement move is a trial: it survives only if the full
         # route (keep-best) accepts it. Cross-board validation showed the old
@@ -200,16 +212,21 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                         "boosted": sum(1 for v in priority.values() if v),
                         "moved": moved})
         moved = 0
+        # arm-1: this route's failing nets route first next time
+        for name in summary["failures"]:
+            priority[name] = priority.get(name, 0) + 1
+            persist[name] = persist.get(name, 0) + 1
         if best is None or score < best:
             best, best_bytes = score, board.read_bytes()
+            # snapshot the route-ordering state of the accepted board so only
+            # the improving path's boosts carry forward (stability)
+            best_priority, best_persist = dict(priority), dict(persist)
+            best_err = list(err_sites)
             stall = 0
         else:
             stall += 1
         if score == (0, 0):
             break
-        for name in summary["failures"]:
-            priority[name] = priority.get(name, 0) + 1
-            persist[name] = persist.get(name, 0) + 1
 
     if best_bytes is not None:
         board.write_bytes(best_bytes)
