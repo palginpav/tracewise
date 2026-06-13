@@ -210,8 +210,11 @@ def refill_zones(board: str | Path) -> None:
 
 def route_board_engine(board: str | Path, pitch: float = 0.1,
                        priority: dict[str, int] | None = None,
-                       ripup_factor: int = 8) -> dict:
-    """End-to-end: extract -> grid -> route_all -> emit. Returns a summary."""
+                       ripup_factor: int = 8, via_cost: float = 10.0) -> dict:
+    """End-to-end: extract -> grid -> route_all -> emit. Returns a summary.
+
+    `via_cost` is the A* penalty for a layer hop; lower it to make the router
+    use the back layer as a bypass lane (F->B->F) past congestion."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors = build_problem(data, pitch=pitch,
@@ -225,7 +228,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     for n in nets:
         n.via_halfwidth_cells = via_half
     results = route_all(grid, nets, escape=12, priority=priority,
-                        ripup_factor=ripup_factor)
+                        ripup_factor=ripup_factor, via_cost=via_cost)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"])
