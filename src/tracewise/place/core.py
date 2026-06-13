@@ -36,6 +36,7 @@ class PlaceProblem:
     net_w: torch.Tensor | None = None  # optional per-net HPWL weights
     # per-part pins: idx -> list of (net_index, dx, dy) for rotation scoring
     part_pins: dict | None = None
+    side: torch.Tensor | None = None  # [N] int, 0=front 1=back (layer-aware)
 
 
 def build_problem(data: dict, lock_refs: set[str] | None = None,
@@ -49,6 +50,7 @@ def build_problem(data: dict, lock_refs: set[str] | None = None,
     movable = torch.tensor(
         [not f["locked"] and f["ref"] not in lock_refs for f in fps], dtype=torch.bool
     )
+    side = torch.tensor([int(f.get("side", 0)) for f in fps], dtype=torch.long)
 
     by_net: dict[str, list[tuple[int, float, float]]] = {}
     for i, f in enumerate(fps):
@@ -89,6 +91,7 @@ def build_problem(data: dict, lock_refs: set[str] | None = None,
         decap=decap,
         net_w=torch.tensor(weights, dtype=torch.float64) if net_weights else None,
         part_pins=part_pins,
+        side=side,
     )
 
 
@@ -114,7 +117,8 @@ def true_hpwl(pos: torch.Tensor, nets) -> float:
     return total
 
 
-def overlap_penalty(pos: torch.Tensor, size: torch.Tensor) -> torch.Tensor:
+def overlap_penalty(pos: torch.Tensor, size: torch.Tensor,
+                    side: torch.Tensor | None = None) -> torch.Tensor:
     half = size / 2
     lo, hi = pos - half, pos + half
     ox = torch.relu(torch.minimum(hi[:, None, 0], hi[None, :, 0])
@@ -122,6 +126,10 @@ def overlap_penalty(pos: torch.Tensor, size: torch.Tensor) -> torch.Tensor:
     oy = torch.relu(torch.minimum(hi[:, None, 1], hi[None, :, 1])
                     - torch.maximum(lo[:, None, 1], lo[None, :, 1]))
     area = ox * oy
+    if side is not None:
+        # parts on opposite copper sides occupy different physical planes and
+        # cannot collide — only same-side pairs count (layer-aware placement)
+        area = area * (side[:, None] == side[None, :]).to(area.dtype)
     area = area - torch.diag_embed(torch.diagonal(area))  # zero self-overlap
     return area.sum() / 2
 
@@ -227,23 +235,25 @@ def legalize_tetris(
     step: float = 0.25,
     max_r: float = 12.0,
     rotatable: torch.Tensor | None = None,
+    side: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, set[int]]:
     """Tetris-style legalization in box-center space: components legalize
     one at a time (largest first), each snapping to the nearest position
-    (expanding ring search) that overlaps nothing already legal. Locked parts
-    are immovable obstacles. Guarantees pairwise-legal boxes where the board
-    has room — the measured gate for routability (overlapping courtyards
-    block routing corridors directly)."""
+    (expanding ring search) that overlaps nothing already legal ON THE SAME
+    COPPER SIDE. Locked parts are immovable obstacles. Guarantees pairwise-
+    legal boxes per side where the board has room — the measured gate for
+    routability (overlapping courtyards block routing corridors directly)."""
     x1, y1, x2, y2 = board
     half = (size + margin) / 2
     n = len(pos)
     out = pos.clone()
-    placed: list[tuple[float, float, float, float]] = []
+    sd = side.tolist() if side is not None else [0] * n  # 0=front 1=back
+    placed: list[tuple[float, float, float, float, int]] = []  # rect + side
     for i in range(n):
         if not bool(movable[i]):
             hx, hy = float(half[i, 0]), float(half[i, 1])
             cx, cy = float(out[i, 0]), float(out[i, 1])
-            placed.append((cx - hx, cy - hy, cx + hx, cy + hy))
+            placed.append((cx - hx, cy - hy, cx + hx, cy + hy, sd[i]))
 
     # ring offsets sorted by distance, generated once
     k = int(max_r / step)
@@ -267,9 +277,9 @@ def legalize_tetris(
                 cy = min(max(dy0 + oy, y1 + hy), y2 - hy)
                 r = (cx - hx, cy - hy, cx + hx, cy + hy)
                 if all(r[2] <= q[0] or q[2] <= r[0] or r[3] <= q[1] or q[3] <= r[1]
-                       for q in placed):
+                       for q in placed if q[4] == sd[i]):  # same-side only
                     out[i, 0], out[i, 1] = cx, cy
-                    placed.append(r)
+                    placed.append((*r, sd[i]))
                     placed_ok = True
                     if rot:
                         rotated.add(i)
@@ -279,7 +289,7 @@ def legalize_tetris(
         if not placed_ok:
             hxr, hyr = float(half[i, 0]), float(half[i, 1])
             cx, cy = float(out[i, 0]), float(out[i, 1])
-            placed.append((cx - hxr, cy - hyr, cx + hxr, cy + hyr))  # leave as-is
+            placed.append((cx - hxr, cy - hyr, cx + hxr, cy + hyr, sd[i]))  # as-is
     return out, rotated
 
 
@@ -305,7 +315,7 @@ def optimize(
         w_ov = w_overlap_final * t  # let parts pass through each other early
         cost = (
             smooth_hpwl(pos, prob.nets, tau=tau, net_w=prob.net_w)
-            + w_ov * overlap_penalty(pos + prob.coff, prob.size)
+            + w_ov * overlap_penalty(pos + prob.coff, prob.size, prob.side)
             + 10.0 * boundary_penalty(pos + prob.coff, prob.size, prob.board)
             + w_decap * decap_penalty(pos, prob.decap)
             + (w_congestion * t) * congestion_penalty(pos, prob.nets, prob.board)
@@ -314,7 +324,7 @@ def optimize(
         opt.step()
     final = prob.pos0 + delta.detach() * mask
     centers = final + prob.coff
-    overlap_global = float(overlap_penalty(centers, prob.size))
+    overlap_global = float(overlap_penalty(centers, prob.size, prob.side))
     # rotation candidates: origin ≈ box center (passives) — orientation swap
     # keeps the box model exact without offset-rotation bookkeeping
     rotatable = None
@@ -344,7 +354,7 @@ def optimize(
             if delta > 1.0:  # rotation would cost wirelength — veto
                 rotatable[i] = False
     centers, rotated = legalize_tetris(centers, prob.size, prob.movable,
-                                       prob.board, rotatable=rotatable)
+                                       prob.board, rotatable=rotatable, side=prob.side)
     final = centers - prob.coff
     return {
         "positions": {r: (float(final[i, 0]), float(final[i, 1]),
@@ -352,8 +362,8 @@ def optimize(
                       for i, r in enumerate(prob.refs) if bool(prob.movable[i])},
         "rotated": len(rotated),
         "hpwl_before": true_hpwl(prob.pos0, prob.nets),
-        "overlap_initial": float(overlap_penalty(prob.pos0 + prob.coff, prob.size)),
+        "overlap_initial": float(overlap_penalty(prob.pos0 + prob.coff, prob.size, prob.side)),
         "hpwl_after": true_hpwl(final, prob.nets),
         "overlap_global": overlap_global,
-        "overlap_after": float(overlap_penalty(final + prob.coff, prob.size)),
+        "overlap_after": float(overlap_penalty(final + prob.coff, prob.size, prob.side)),
     }

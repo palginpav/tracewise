@@ -41,6 +41,7 @@ for fp in b.GetFootprints():
         "x": fp.GetPosition().x / IU, "y": fp.GetPosition().y / IU,
         "w": w, "h": h, "cx": cx, "cy": cy,
         "locked": bool(fp.IsLocked()),
+        "side": 1 if fp.IsFlipped() else 0,  # 0=front (F.Cu), 1=back (B.Cu)
         "rot": fp.GetOrientation().AsDegrees(),
         "pads": pads,
     }})

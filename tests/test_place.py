@@ -205,3 +205,32 @@ def test_rank_by_storm_orders_by_density():
     assert "C2" not in refs  # zero hot points -> excluded
     assert set(refs) == {"C1", "R1"}
     assert all(n > 0 for n, _ in ranked)
+
+
+def test_overlap_penalty_per_side():
+    from tracewise.place.core import overlap_penalty
+    # two 2x2 boxes at the same (x,y)
+    pos = torch.tensor([[10.0, 10.0], [10.0, 10.0]], dtype=torch.float64)
+    size = torch.tensor([[2.0, 2.0], [2.0, 2.0]], dtype=torch.float64)
+    same = torch.tensor([0, 0])
+    opp = torch.tensor([0, 1])
+    assert float(overlap_penalty(pos, size, same)) == pytest.approx(4.0)  # collide
+    assert float(overlap_penalty(pos, size, opp)) == pytest.approx(0.0)   # opposite sides
+    assert float(overlap_penalty(pos, size)) == pytest.approx(4.0)  # side=None back-compat
+
+
+def test_legalize_tetris_per_side_no_false_separation():
+    from tracewise.place.core import legalize_tetris, overlap_penalty
+    # two parts stacked at the same spot, opposite sides — must NOT be moved
+    pos = torch.tensor([[10.0, 10.0], [10.0, 10.0]], dtype=torch.float64)
+    size = torch.tensor([[3.0, 3.0], [3.0, 3.0]], dtype=torch.float64)
+    movable = torch.tensor([True, True])
+    side = torch.tensor([0, 1])
+    out, _ = legalize_tetris(pos, size, movable, (0.0, 0.0, 50.0, 50.0), side=side)
+    assert torch.allclose(out, pos)  # opposite sides: legal as-is, no separation
+    assert float(overlap_penalty(out, size, side)) == pytest.approx(0.0)
+    # same side: must separate
+    out2, _ = legalize_tetris(pos, size, movable, (0.0, 0.0, 50.0, 50.0),
+                              side=torch.tensor([0, 0]))
+    assert float(overlap_penalty(out2, size, torch.tensor([0, 0]))) == pytest.approx(0.0, abs=1e-9)
+    assert not torch.allclose(out2, pos)  # same side: had to move
