@@ -140,11 +140,15 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
             stubborn = {n for n, c in persist.items() if c >= it}
             if stubborn:
                 from tracewise.place.extract import apply_positions
-                from tracewise.route.engine.eccf import t3_verify
 
                 # flip escalation only after the normal arm stalls (the
-                # "reaching the unconnected floor" trigger)
-                flip_now = stall >= 2
+                # "reaching the unconnected floor" trigger) AND only when the
+                # back side isn't poured edge-to-edge (the back-free probe:
+                # coarse cost-saver — suppresses provably-inert flips on
+                # fully-poured backs like mitayi; T3+keep-best remains the
+                # arbiter for boards above the threshold)
+                from tracewise.route.engine.eccf import back_free_fraction, t3_verify
+                flip_now = stall >= 2 and back_free_fraction(board) >= 0.01
                 scored = eccf_candidates(board, stubborn, error_sites=err_sites,
                                          include_flips=flip_now)
                 # split quota so combos cannot crowd the proven single moves out

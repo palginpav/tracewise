@@ -344,6 +344,49 @@ def patch_data(data: dict, ref: str, nx: float, ny: float, rot: float,
     return out
 
 
+def back_free_fraction(board: str | Path) -> float:
+    """Fraction of the board area NOT covered by back-side (B.Cu) copper pours
+    — the precondition for storm-flips / back-side relief to pay (measured:
+    flips help on zuluscsi's free back, inert on mitayi's poured back). Uses
+    zone bounding boxes on B.Cu vs board area; pour-aware and cheap (no route).
+    1.0 = empty back, 0.0 = fully poured."""
+    from tracewise.sexpr import parse_file
+
+    try:
+        root = parse_file(board)
+    except (OSError, ValueError):
+        return 1.0
+    # approximate board area from the union of all zone vertex extents (cheap;
+    # avoids a kicad-cli Edge.Cuts query).
+    xs, ys = [], []
+    for z in root.find_all("zone"):
+        for pt in z.find_all("xy"):
+            try:
+                xs.append(float(pt.arg(1)))
+                ys.append(float(pt.arg(2)))
+            except (TypeError, ValueError):
+                pass
+    if not xs or not ys:
+        return 1.0
+    bw, bh = max(xs) - min(xs), max(ys) - min(ys)
+    board_area = max(bw * bh, 1e-6)
+    pour = 0.0
+    for z in root.find_all("zone"):
+        layers = " ".join((ly.arg() or "") for ly in z.find_all("layer"))
+        if "B.Cu" not in layers:
+            continue
+        zxs, zys = [], []
+        for pt in z.find_all("xy"):
+            try:
+                zxs.append(float(pt.arg(1)))
+                zys.append(float(pt.arg(2)))
+            except (TypeError, ValueError):
+                pass
+        if zxs and zys:
+            pour += (max(zxs) - min(zxs)) * (max(zys) - min(zys))
+    return max(0.0, 1.0 - min(pour / board_area, 1.0))
+
+
 def rank_by_storm(parts: list, hot_points: list, radius: float = 4.0) -> list:
     """Rank parts by how many congestion hot-points (failing-net pads + DRC
     violation sites) sit within `radius` mm of the part centre — the literal

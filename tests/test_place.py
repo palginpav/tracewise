@@ -234,3 +234,19 @@ def test_legalize_tetris_per_side_no_false_separation():
                               side=torch.tensor([0, 0]))
     assert float(overlap_penalty(out2, size, torch.tensor([0, 0]))) == pytest.approx(0.0, abs=1e-9)
     assert not torch.allclose(out2, pos)  # same side: had to move
+
+
+def test_back_free_fraction_poured_vs_empty(tmp_path):
+    from tracewise.route.engine.eccf import back_free_fraction
+    # a board whose B.Cu pour bbox covers the whole zone-vertex extent -> ~0 free
+    poured = tmp_path / "poured.kicad_pcb"
+    poured.write_text("""(kicad_pcb (version 1) (generator "t")
+      (zone (net 1) (layer "B.Cu") (polygon (pts
+        (xy 0 0) (xy 100 0) (xy 100 100) (xy 0 100)))))""")
+    assert back_free_fraction(poured) < 0.01
+    # front-only pour -> back is empty -> ~1.0 free
+    front = tmp_path / "front.kicad_pcb"
+    front.write_text("""(kicad_pcb (version 1) (generator "t")
+      (zone (net 1) (layer "F.Cu") (polygon (pts
+        (xy 0 0) (xy 100 0) (xy 100 100) (xy 0 100)))))""")
+    assert back_free_fraction(front) > 0.99
