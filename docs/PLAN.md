@@ -139,6 +139,17 @@ better placement may move the routability needle more cheaply.
   sides) inert, zuluscsi (free back) wins: the relief works exactly where topology allows,
   as predicted. Cross-board precondition probe (back-side free area) is the cheap predictor
   of where the arm pays.
+- [x] **Layer-aware placer SHIPPED** (PIPELINE-DESIGN build-order steps 1-2): extract carries
+  side (fp.IsFlipped); overlap_penalty masks opposite-side pairs; legalize_tetris collides
+  per-side. The placer was wrongly separating front/back parts at the same xy — the
+  foundation the storm-flip arm needed. Backward-compatible (side=None -> all front). NEXT:
+  unify storm-flip as the {side} move under the back-free probe gate; cross-board validation.
+- [ ] ROBUSTNESS: a zuluscsi via-sweep route hung at 99.9% CPU for 21 min on via_cost=10
+  (a route the probe completed fine earlier) — the engine has a performance cliff on dense
+  boards (A* expansion blowup under rip-up). Add a hard per-net expansion/wall-clock cap so
+  a pathological route degrades to an explicit failure instead of hanging the loop.
+- [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
+  starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
 - [~] ECCF integration round 1 (superseded): T2-only candidate screening in the auto loop —
   measured insufficient (moves T2 approved still cost pad-completion elsewhere, 63 held
   by rollback; errors improved 82→59). Consistent with the funnel design: T2 is the
