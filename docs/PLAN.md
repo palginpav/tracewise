@@ -132,6 +132,13 @@ better placement may move the routability needle more cheaply.
   wrong board — value pending a design with free back-side area (R4 cross-board test).
   Design fix banked regardless: flips bypass the T2 gate (T2 can't see corridor-freeing
   externalities; only T3 can) — correct for any board where they do help.
+- [x] **Storm-flip VALIDATED on zuluscsi** (the board the back-area probe predicted: 88%
+  free back, balanced zones, 2-layer). T3-probe: flip R125 (a resistor — the called-out
+  class) reduced T3 fail 10->9 and cost ~10% (100135->90414), while T2 scored it +10.6
+  (worse) — the externality blind spot, proving the T2-bypass design. mitayi (poured both
+  sides) inert, zuluscsi (free back) wins: the relief works exactly where topology allows,
+  as predicted. Cross-board precondition probe (back-side free area) is the cheap predictor
+  of where the arm pays.
 - [~] ECCF integration round 1 (superseded): T2-only candidate screening in the auto loop —
   measured insufficient (moves T2 approved still cost pad-completion elsewhere, 63 held
   by rollback; errors improved 82→59). Consistent with the funnel design: T2 is the
