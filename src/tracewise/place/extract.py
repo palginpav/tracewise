@@ -71,10 +71,13 @@ for fp in b.GetFootprints():
     r = fp.GetReference()
     if r in moves and not fp.IsLocked():
         m = moves[r]
-        fp.SetPosition(pcbnew.VECTOR2I(int(m[0] * IU), int(m[1] * IU)))
+        pos = pcbnew.VECTOR2I(int(m[0] * IU), int(m[1] * IU))
+        fp.SetPosition(pos)
         if len(m) > 2 and m[2]:
             fp.SetOrientation(fp.GetOrientation()
                               + pcbnew.EDA_ANGLE(float(m[2]), pcbnew.DEGREES_T))
+        if len(m) > 3 and m[3]:  # flip to the other copper side, in place
+            fp.Flip(pos, False)
 pcbnew.SaveBoard({board!r}, b)
 print("moved", sum(1 for fp in b.GetFootprints() if fp.GetReference() in moves))
 """

@@ -176,3 +176,32 @@ def test_tetris_rotates_to_fit_slot():
     sz = size.clone()
     sz[0] = torch.tensor([2.0, 8.0])
     assert float(overlap_penalty(out, sz)) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_patch_data_flip_swaps_layers():
+    from tracewise.route.engine.eccf import patch_data
+    data = {"pads": [
+        {"ref": "C1", "x": 10.0, "y": 10.0, "hw": 0.5, "hh": 0.5,
+         "front": True, "back": False, "net": "VCC"},
+        {"ref": "C1", "x": 11.0, "y": 10.0, "hw": 0.5, "hh": 0.5,
+         "front": True, "back": False, "net": "GND"},
+    ]}
+    out = patch_data(data, "C1", 10.5, 10.0, 0.0, flip=True)
+    assert all(p["back"] and not p["front"] for p in out["pads"])
+    # original untouched (deepcopy)
+    assert all(p["front"] for p in data["pads"])
+
+
+def test_rank_by_storm_orders_by_density():
+    from tracewise.route.engine.eccf import rank_by_storm
+    parts = [
+        {"ref": "C1", "x": 0.0, "y": 0.0},   # 3 hot points within 4mm
+        {"ref": "C2", "x": 50.0, "y": 50.0},  # none nearby
+        {"ref": "R1", "x": 1.0, "y": 1.0},   # 3 hot points within 4mm
+    ]
+    hot = [(0.5, 0.5), (1.0, 0.0), (0.0, 1.5)]
+    ranked = rank_by_storm(parts, hot, radius=4.0)
+    refs = [fp["ref"] for _, fp in ranked]
+    assert "C2" not in refs  # zero hot points -> excluded
+    assert set(refs) == {"C1", "R1"}
+    assert all(n > 0 for n, _ in ranked)

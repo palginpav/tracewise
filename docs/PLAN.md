@@ -121,6 +121,17 @@ better placement may move the routability needle more cheaply.
   the router rejected their predicted benefit (T3's no-rip-up blind spot on coordinated
   moves). Fix queued: separate T3 quotas (top-3 singles + top-1 combo). Candidate-mix
   sensitivity is now a measured property of the funnel.
+- [x] Quota split (top-3 singles + top-1 combo) shipped — combos no longer crowd singles.
+- [~] "Center of the storm" arm (layer-flip passives in the densest congestion cluster):
+  built, T3-gated, stall-triggered (fires only when the normal arm reaches its floor, per
+  the operator's spec). MEASURED INERT ON MITAYI: T2 rejects all flips (+15 delta — a
+  flipped pad escapes WORSE because the back side is a GND pour), and T3 confirms no fail
+  reduction (76 held; one flip shaved 53/763k cost = noise). Mechanism: the relief only
+  works when the OTHER side has free routing area; mitayi routes single-sided over a back
+  ground plane, so a flip relocates a pad INTO the pour, not out of congestion. Sound idea,
+  wrong board — value pending a design with free back-side area (R4 cross-board test).
+  Design fix banked regardless: flips bypass the T2 gate (T2 can't see corridor-freeing
+  externalities; only T3 can) — correct for any board where they do help.
 - [~] ECCF integration round 1 (superseded): T2-only candidate screening in the auto loop —
   measured insufficient (moves T2 approved still cost pad-completion elsewhere, 63 held
   by rollback; errors improved 82→59). Consistent with the funnel design: T2 is the

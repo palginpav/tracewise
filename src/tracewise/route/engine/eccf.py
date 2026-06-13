@@ -319,9 +319,12 @@ def t3_verify(board: str | Path, nets: set[str]) -> tuple[float, int]:
     return total, fails
 
 
-def patch_data(data: dict, ref: str, nx: float, ny: float, rot: float) -> dict:
-    """Candidate evaluation without board writes: shift (and optionally rotate
-    90 degrees about the pad centroid) one part's pads in extracted data."""
+def patch_data(data: dict, ref: str, nx: float, ny: float, rot: float,
+               flip: bool = False) -> dict:
+    """Candidate evaluation without board writes: shift, optionally rotate 90
+    degrees about the pad centroid, and optionally FLIP to the other copper
+    side (front<->back) — the "center of the storm" relief move for passives:
+    a flipped pad frees its old-layer corridor and blocks the opposite one."""
     import copy
 
     out = copy.deepcopy(data)
@@ -336,4 +339,22 @@ def patch_data(data: dict, ref: str, nx: float, ny: float, rot: float) -> dict:
             dx, dy = dy, -dx  # +90 KiCad, verified
             p["hw"], p["hh"] = p["hh"], p["hw"]
         p["x"], p["y"] = nx + dx, ny + dy
+        if flip:  # SMD copper moves to the opposite layer
+            p["front"], p["back"] = p["back"], p["front"]
     return out
+
+
+def rank_by_storm(parts: list, hot_points: list, radius: float = 4.0) -> list:
+    """Rank parts by how many congestion hot-points (failing-net pads + DRC
+    violation sites) sit within `radius` mm of the part centre — the literal
+    'center of the storm'. Returns (count, part) pairs, busiest first, count>0
+    only. Pure geometry: unit-testable without KiCad."""
+    scored = []
+    r2 = radius * radius
+    for fp in parts:
+        n = sum(1 for hx, hy in hot_points
+                if (fp["x"] - hx) ** 2 + (fp["y"] - hy) ** 2 <= r2)
+        if n:
+            scored.append((n, fp))
+    scored.sort(key=lambda s: -s[0])
+    return scored
