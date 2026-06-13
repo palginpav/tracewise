@@ -134,7 +134,13 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
     stall = 0  # rounds since the last improvement; gates the flip escalation
 
     for it in range(max_iters):
-        board.write_bytes(pristine)
+        # always explore from the BEST board so far — never a mutable running
+        # baseline. A placement move is a trial: it survives only if the full
+        # route (keep-best) accepts it. Cross-board validation showed the old
+        # commit-then-route order let a T3-good but globally-catastrophic move
+        # (helps ~5 stubborn nets, wrecks 111 others) poison the baseline and
+        # the search wander (zuluscsi: routed 101->11, unconnected 45->231).
+        board.write_bytes(best_bytes if best_bytes is not None else pristine)
         if placement_arm and it > 0:
             # arm 2 v2: ECCF-screened single-part fixes for stubborn nets
             stubborn = {n for n, c in persist.items() if c >= it}
@@ -173,12 +179,13 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                         improves = key < (base_fail, base_cost)
                         if improves and (pick is None or key < pick[0]):
                             pick = (key, moves_list)
-                    if pick:  # T3-verified improvement only
+                    if pick:  # T3-picked move is a TRIAL on this iter's board;
+                        # the full route below is the accept gate (keep-best),
+                        # NOT a commit to the baseline.
                         _, moves_list = pick
                         apply_positions(board, {r: (x, y, ro, fl)
                                                 for r, x, y, ro, fl in moves_list})
                         moved = len(moves_list)
-                        pristine = board.read_bytes()
         summary = route_board_engine(board, priority=priority,
                                      ripup_factor=8 + 4 * it)
         report = run_drc(board)
