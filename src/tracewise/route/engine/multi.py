@@ -123,8 +123,17 @@ def _nearest_victim(failed: Net, routed: list[NetRoute]) -> NetRoute | None:
 
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               ripup_factor: int = 8, escape: int = 0,
-              priority: dict[str, int] | None = None) -> dict[str, NetRoute]:
-    """Route every net; bounded rip-up on failures. Returns name -> NetRoute."""
+              priority: dict[str, int] | None = None,
+              time_budget_s: float = 600.0) -> dict[str, NetRoute]:
+    """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
+
+    `time_budget_s` is a hard wall-clock cap: on a dense board the rip-up loop
+    can thrash (A* hitting its expansion cap repeatedly). When the deadline is
+    hit, remaining nets are returned as explicit failures rather than hanging
+    the pipeline — a measured robustness need (a route once ran 21 min)."""
+    import time
+
+    deadline = time.monotonic() + time_budget_s
     results: dict[str, NetRoute] = {}
     routed: list[NetRoute] = []
     budget = ripup_factor * max(len(nets), 1)
@@ -132,6 +141,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     queue = order_nets(nets, priority)
     attempts: dict[str, int] = {}
     while queue and budget > 0:
+        if time.monotonic() > deadline:
+            break  # wall-clock cap: bail to explicit failures below
         net = queue.pop(0)
         budget -= 1
         attempts[net.name] = attempts.get(net.name, 0) + 1
@@ -151,6 +162,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                 queue.insert(0, net)  # we retry first, with the space freed
                 continue
         results[net.name] = nr  # definitive failure, recorded
-    for net in queue:  # budget exhausted
-        results.setdefault(net.name, NetRoute(net=net, reason="rip-up budget exhausted"))
+    reason = ("time budget exhausted" if time.monotonic() > deadline
+              else "rip-up budget exhausted")
+    for net in queue:  # budget or deadline exhausted
+        results.setdefault(net.name, NetRoute(net=net, reason=reason))
     return results
