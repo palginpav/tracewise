@@ -48,13 +48,20 @@ def route(
     start: tuple[int, int, int],
     goals: set[tuple[int, int, int]],
     via_cost: float = 10.0,
-    max_expansions: int = 600_000,
+    max_expansions: int | None = None,
     escape: int = 0,
     escape_penalty: float = 4.0,
     max_seconds: float = 45.0,
 ) -> RouteResult:
     """A* from start to the nearest of `goals`. Cells in `goals` need not be
-    free (pads are blocked for other nets but are this net's targets)."""
+    free (pads are blocked for other nets but are this net's targets).
+
+    `max_expansions` defaults to ~2x the grid node count so it never cuts a
+    legitimate route (a fixed 600k cut zuluscsi's 1.8M-node grid: 48->68
+    unconnected); the per-route wall-clock (`max_seconds`) is the real runaway
+    guard, not the expansion ceiling."""
+    if max_expansions is None:
+        max_expansions = 2 * grid.layers * grid.ny * grid.nx
     if not goals:
         return RouteResult(False, [], 0.0, "no goals")
     for g in goals:  # tripwire for a rare unexplained corruption (2 sightings)
