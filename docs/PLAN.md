@@ -176,6 +176,16 @@ made dense boards worse (routes needing detours fail -> rip-up thrash -> 704s/84
 NEXT LEVER (substantial): a genuinely faster router — coarsen-then-refine (0.2mm pass then
 0.1mm, ~4x fewer cells), numpy-vectorized wavefront (eccf's build_field is the template), or
 Rust. Placement tricks cannot beat a time-truncated route; speed is the gate.
+
+UPDATE (timeout experiment, operator-suggested): raising route_all budget 600s->1800s DID
+route more — unconnected 48->27 (confirms time-bound) — BUT errors ballooned 105->290, so the
+combined score (unc*5+err) got WORSE (345->425). More time = the router forces more
+connections through clearance violations (escape-shaving + rip-up). Coarser pitch (0.2/0.15mm)
+also worse (123/103 — misses sub-pitch gaps). CONCLUSION: the real bottleneck is routing
+QUALITY, not speed or timeout — the engine completes nets by shaving clearance rather than
+finding legal paths; every knob (time, pitch, placement) hits this wall. NEXT LEVER (deep,
+fresh session): legality-first routing — reduce escape-shaving reliance / make rip-up prefer
+legal detours over clearance violations. No current knob beats the 48/105 balance net-net.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
