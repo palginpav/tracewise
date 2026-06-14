@@ -216,8 +216,13 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
         # capture it before routing so an accepted iteration explores from a
         # clean placement next time (not the routed copper)
         trial_placement = board.read_bytes()
-        summary = route_board_engine(board, priority=priority,
-                                     ripup_factor=8 + 4 * it)
+        # constant rip-up budget: escalating it (8+4*it) made each iteration
+        # route under different conditions, so the loop could not reproduce its
+        # own best and move-comparisons were unfair (zuluscsi: best 48 at it0
+        # ripup8 became 167 at it2 ripup16 on the SAME placement). Routing is
+        # deterministic given (placement, priority, ripup), so a fixed budget
+        # makes every iteration a fair, reproducible trial.
+        summary = route_board_engine(board, priority=priority, ripup_factor=8)
         report = run_drc(board)
         drc = drc_summary(report)
         err_sites = [(v["items"][0]["pos"]["x"], v["items"][0]["pos"]["y"])
