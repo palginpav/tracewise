@@ -142,12 +142,21 @@ better placement may move the routability needle more cheaply.
 - [x] **Layer-aware placer SHIPPED** (PIPELINE-DESIGN build-order steps 1-2): extract carries
   side (fp.IsFlipped); overlap_penalty masks opposite-side pairs; legalize_tetris collides
   per-side. The placer was wrongly separating front/back parts at the same xy — the
-  foundation the storm-flip arm needed. Backward-compatible (side=None -> all front). NEXT:
-  unify storm-flip as the {side} move under the back-free probe gate; cross-board validation.
-- [ ] ROBUSTNESS: a zuluscsi via-sweep route hung at 99.9% CPU for 21 min on via_cost=10
-  (a route the probe completed fine earlier) — the engine has a performance cliff on dense
-  boards (A* expansion blowup under rip-up). Add a hard per-net expansion/wall-clock cap so
-  a pathological route degrades to an explicit failure instead of hanging the loop.
+  foundation the storm-flip arm needed. Backward-compatible (side=None -> all front).
+- [x] **Robust pipeline hardening — six fixes the cross-board (zuluscsi) validation forced**,
+  each exposing the next: (1) per-side overlap/legalize; (2) wall-clock cap on route_all;
+  (3) bounded single route (expansion ceiling 2M->600k + 45s/route — a single unreachable
+  net had overshot by 16 min); (4) explore-from-best, not a mutable baseline (a T3-good but
+  globally-catastrophic move had poisoned the search: zuluscsi 46->230); (5) priority/err
+  snapshotted with best (rejected iters no longer pollute route ordering); (6) explore from
+  a STRIPPED placement + combined keep-best score unconnected*5+errors (re-routing the
+  routed board piled copper -> errors 82->990; lexicographic had accepted 49/655 over
+  56/88). HONEST FINDING: under the sound pipeline mitayi's best is ~63-64 (stable, errors
+  bounded) — the earlier 56 was partly an artifact of unsound accept logic + gameable
+  lexicographic score. mitayi is hard for the arm (poured back, flips inert); zuluscsi (free
+  back, validated flip) is where it should pay — sound re-run pending. UNCONNECTED_WEIGHT=5
+  is a tunable objective knob.
+- [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
 - [~] ECCF integration round 1 (superseded): T2-only candidate screening in the auto loop —
