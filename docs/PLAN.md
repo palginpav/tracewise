@@ -197,6 +197,20 @@ polygons, mark as grid obstacles (~kills 35 items_not_allowed); (2) diagonal-cro
 prevention — edge-occupancy so two nets' 45deg segments can't cross a shared corner;
 (3) legality-first rip-up cost; (4) faster router for completion. zuluscsi is hard in several
 INDEPENDENT ways; no quick win.
+
+KEEPOUT-AWARENESS SHIPPED (task 1): router parses keepout zones (extract_keepouts) and marks
+their polygons as grid obstacles (Grid.block_polygon ray-cast fill; fixed a swapped Y-coord
+unpack bug). zuluscsi: items_not_allowed 35->3 (3 boundary tracks remain — inflation cleanup
+pending), errors 103->64, unconnected 60->81. The old 60 was CHEATING (copper through a
+forbidden zone); respecting the keepout removes invalid solutions, so the combined-score
+"worsening" (403->469) is an objective-weight artifact — correctness improved.
+
+HEADLINE NEXT BUILD (from docs/FORMULATION.md — operator's formalize-it idea): the router is
+"negotiated congestion MINUS the negotiation" — capacity is a HARD WALL, so when stuck it
+forces connections through violations (the signature of every measured wall). Build a
+PathFinder negotiated-congestion loop around the existing A* (price overuse, iterate) + the
+diagonal X-crossing edge resource. Spike proved it: forbid-wall -> 3 shorts, PathFinder -> 0
+in 3 iters. The principled path below 46, reusing the A* almost verbatim.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
