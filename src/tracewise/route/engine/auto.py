@@ -236,20 +236,29 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                         "boosted": sum(1 for v in priority.values() if v),
                         "moved": moved})
         moved = 0
-        # arm-1: this route's failing nets route first next time
-        for name in summary["failures"]:
-            priority[name] = priority.get(name, 0) + 1
-            persist[name] = persist.get(name, 0) + 1
         if score < best_score:
             best_score, best = score, (unc, err)
             base_bytes = trial_placement  # winning STRIPPED placement
             best_routed = board.read_bytes()  # routed board, for output
-            # snapshot route-ordering state of the accepted board (stability)
+            # snapshot the priority/persist that ACTUALLY PRODUCED this route
+            # (these were used at routing time, before the boost below) — so
+            # restoring best_priority reproduces best. Snapshotting the
+            # post-boost state was an off-by-one: the route that reached
+            # zuluscsi's 48 used zero boosts, but the boosted state (which
+            # routes to 167 — boosting failed nets first hurts a dense board)
+            # was saved, so the loop could never reproduce its own best.
             best_priority, best_persist = dict(priority), dict(persist)
             best_err = list(err_sites)
             stall = 0
         else:
             stall += 1
+        # arm-1 (board-dependent): boost this route's failing nets so they route
+        # first NEXT iteration's exploration. Helps some boards (mitayi), hurts
+        # others (zuluscsi) — keep-best protects the output regardless. Applied
+        # AFTER the snapshot so it never corrupts the reproducible best state.
+        for name in summary["failures"]:
+            priority[name] = priority.get(name, 0) + 1
+            persist[name] = persist.get(name, 0) + 1
         if unc == 0 and err == 0:
             break
 
