@@ -102,3 +102,28 @@ def test_simplify_splits_at_via():
     runs = simplify(path)
     assert len(runs) == 2
     assert runs[0][-1] == (0, 0, 1) and runs[1][0] == (1, 0, 1)
+
+
+def test_block_polygon_rectangle():
+    g = make_grid(10.0, 10.0, layers=2)
+    # 2x2mm rectangle keepout centered at (5,5), layer 0 only
+    g.block_polygon(0, [(4.0, 4.0), (6.0, 4.0), (6.0, 6.0), (4.0, 6.0)])
+    cy, cx = g.to_cell(5.0, 5.0)
+    assert not g.free(0, cy, cx)  # inside keepout -> blocked
+    assert g.hard[0, cy, cx] > 0  # hard (escape can't cross)
+    assert g.free(1, cy, cx)  # other layer untouched
+    oy, ox = g.to_cell(1.0, 1.0)
+    assert g.free(0, oy, ox)  # outside keepout -> free
+
+
+def test_extract_keepouts_parses_tracks_not_allowed(tmp_path):
+    from tracewise.route.engine.kicad import extract_keepouts
+    pcb = tmp_path / "k.kicad_pcb"
+    pcb.write_text("""(kicad_pcb (version 1) (generator "t")
+      (zone (net 0) (layers "F&B.Cu")
+        (keepout (tracks not_allowed) (vias not_allowed) (copperpour not_allowed))
+        (polygon (pts (xy 10 10) (xy 20 10) (xy 20 20) (xy 10 20)))))""")
+    kos = extract_keepouts(pcb)
+    assert len(kos) == 1
+    assert kos[0]["layers"] == {0, 1}
+    assert len(kos[0]["pts"]) == 4

@@ -89,6 +89,38 @@ class Grid:
             arr[layer, max(0, cy1):min(self.ny, cy2 + 1),
                 max(0, cx1):min(self.nx, cx2 + 1)] += delta
 
+    def block_polygon(self, layer: int, pts: list[tuple[float, float]]) -> None:
+        """Mark a filled polygon (mm vertices) as a hard obstacle on `layer` —
+        used for keepout/rule areas the router must not enter. Rasterized by
+        ray-casting point-in-polygon over the polygon's cell bbox (vectorized);
+        exact for the common axis-aligned rectangle, correct for any simple
+        polygon. Marks both cells (route blocked) and hard (escape can't cross
+        a keepout either)."""
+        if len(pts) < 3:
+            return
+        xs = [px for px, _ in pts]
+        ys = [py for _, py in pts]
+        cy1, cx1 = self.to_cell(min(xs), min(ys))
+        cy2, cx2 = self.to_cell(max(xs), max(ys))
+        cy1, cx1 = max(0, cy1), max(0, cx1)
+        cy2, cx2 = min(self.ny - 1, cy2), min(self.nx - 1, cx2)
+        if cy1 > cy2 or cx1 > cx2:
+            return
+        yy, xx = np.mgrid[cy1:cy2 + 1, cx1:cx2 + 1]
+        wx = self.x0 + xx * self.pitch  # cell-center world coords
+        wy = self.y0 + yy * self.pitch
+        inside = np.zeros(wx.shape, dtype=bool)
+        n = len(pts)
+        for i in range(n):  # ray-casting (Jordan) point-in-polygon, vectorized
+            x1p, y1p = pts[i]
+            x2p, y2p = pts[(i + 1) % n]
+            cond = ((y1p > wy) != (y2p > wy)) & (
+                wx < (x2p - x1p) * (wy - y1p) / ((y2p - y1p) or 1e-12) + x1p)
+            inside ^= cond
+        for arr in (self.cells, self.hard):
+            block = arr[layer, cy1:cy2 + 1, cx1:cx2 + 1]
+            block[inside] += 1
+
     def block_rect(self, layer: int, x1: float, y1: float, x2: float, y2: float,
                    inflate_mm: float = 0.0) -> None:
         cy1, cx1 = self.to_cell(min(x1, x2) - inflate_mm, min(y1, y2) - inflate_mm)

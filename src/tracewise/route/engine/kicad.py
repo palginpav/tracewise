@@ -53,8 +53,57 @@ def extract_pads(board: str | Path) -> dict:
     out = _run_pcbnew_script(PAD_SCRIPT.format(board=str(Path(board).resolve())))
     for line in out.splitlines():
         if line.startswith("TWJSON"):
-            return json.loads(line[len("TWJSON"):])
+            data = json.loads(line[len("TWJSON"):])
+            # keepouts come from a direct sexpr parse (lossless, no pcbnew round-trip)
+            data["keepouts"] = extract_keepouts(board)
+            return data
     raise RuntimeError("pad extraction produced no data")
+
+
+def extract_keepouts(board: str | Path) -> list[dict]:
+    """Keepout / rule-area zones that forbid tracks, parsed from the board
+    s-expression. Each is {layers: set[int], pts: [(x,y)..]}. The router routes
+    through these otherwise (measured: 35 'items_not_allowed' GND tracks in
+    zuluscsi's keepout)."""
+    from tracewise.sexpr import parse_file
+
+    try:
+        root = parse_file(board)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for z in root.find_all("zone"):
+        ko = z.first("keepout")
+        if ko is None:
+            continue
+        tr = ko.first("tracks")
+        if not (tr and tr.arg() == "not_allowed"):
+            continue  # only zones that forbid tracks affect routing
+        names = set()
+        for ly in z.find_all("layer"):
+            names.add(ly.arg() or "")
+        lyrs = z.first("layers")
+        if lyrs:
+            names.update(a.value for a in lyrs.atoms()[1:])
+        layers = set()
+        for nm in names:
+            if "F" in nm and ".Cu" in nm:
+                layers.add(0)
+            if "B" in nm and ".Cu" in nm:
+                layers.add(1)
+        if not layers:
+            layers = {0, 1}  # F&B.Cu or unspecified -> both
+        poly = z.first("polygon")
+        pts = []
+        if poly:
+            for xy in poly.find_all("xy"):
+                try:
+                    pts.append((float(xy.arg(1)), float(xy.arg(2))))
+                except (TypeError, ValueError):
+                    pass
+        if len(pts) >= 3:
+            out.append({"layers": layers, "pts": pts})
+    return out
 
 
 def build_problem(
@@ -63,6 +112,9 @@ def build_problem(
     bd = data["board"]
     grid = Grid(x0=bd["x1"], y0=bd["y1"], width_mm=bd["x2"] - bd["x1"],
                 height_mm=bd["y2"] - bd["y1"], pitch=pitch, layers=2)
+    for ko in data.get("keepouts", []):  # forbid routing through keepout areas
+        for layer in ko["layers"]:
+            grid.block_polygon(layer, ko["pts"])
     inflate = track_mm / 2 + clearance_mm
     by_net: dict[str, list[tuple[int, int, int]]] = {}
     carve: dict[str, list[tuple]] = {}
