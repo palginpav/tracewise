@@ -154,8 +154,14 @@ better placement may move the routability needle more cheaply.
   56/88). HONEST FINDING: under the sound pipeline mitayi's best is ~63-64 (stable, errors
   bounded) — the earlier 56 was partly an artifact of unsound accept logic + gameable
   lexicographic score. mitayi is hard for the arm (poured back, flips inert); zuluscsi (free
-  back, validated flip) is where it should pay — sound re-run pending. UNCONNECTED_WEIGHT=5
-  is a tunable objective knob.
+  back, validated flip) is where it should pay. CONFIRMED STABLE: after two more fixes
+  (7: constant rip-up budget — escalation routed each iter differently; 8: snapshot the
+  priority that PRODUCED best, not the post-boost state — the loop couldn't reproduce its
+  own best), zuluscsi holds 46/46/46 reproducibly, no wandering. arm-1 priority boosting
+  is board-dependent (helps mitayi, hurts zuluscsi) and now effectively neutralized;
+  improvement rests on the T3-verified placement/flip arm under keep-best. Engine
+  baselines: mitayi 63, zuluscsi 46 (was 115 at R4). UNCONNECTED_WEIGHT=5 tunable. The
+  pipeline is now correct/bounded/stable/reproducible — the real deliverable.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
