@@ -16,10 +16,21 @@ result by (unconnected, errors) is kept — a worse iteration rolls back.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from tracewise.route.bridge import drc_summary, run_drc
 from tracewise.route.engine.kicad import route_board_engine
+
+# keep-best objective: an unconnected net (functional failure) is worth ~5 DRC
+# errors. A pure lexicographic (unconnected, errors) order let the loop accept
+# 49 unconnected / 655 errors over 56 / 88 — trading 1 connection for ~570
+# violations. Both must reach 0 for the goal; this scalar prevents the gaming.
+UNCONNECTED_WEIGHT = 5
+
+
+def _combined(unconnected: int, errors: int) -> float:
+    return unconnected * UNCONNECTED_WEIGHT + errors
 
 
 def eccf_candidates(board: Path, failed_nets: set[str],
@@ -123,12 +134,16 @@ def nudge_placement(board: Path, failed_nets: set[str], weight: float = 4.0) -> 
 
 def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True) -> dict:
     board = Path(board)
-    pristine = board.read_bytes()  # caller provides the stripped board
+    pristine = board.read_bytes()  # caller provides the STRIPPED board
     priority: dict[str, int] = {}
     persist: dict[str, int] = {}
     err_sites: list = []
-    best: tuple[int, int] | None = None
-    best_bytes: bytes | None = None
+    best: tuple[int, int] | None = None  # (unconnected, errors) for reporting
+    best_score = math.inf  # scalar used for keep-best (see _combined)
+    base_bytes = pristine  # the best STRIPPED placement explored from (never
+    # a routed board — route_board_engine adds copper on top, so re-routing a
+    # routed board piled up violations: 82 -> 990 errors on mitayi)
+    best_routed: bytes | None = None  # routed board, for the final output
     # priority/persist boosts and error sites are part of the BEST state — a
     # rejected (worse) iteration must not pollute the route ordering of the
     # next (cross-board validation: a catastrophic trial route boosted ~all
@@ -146,13 +161,12 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
         priority = dict(best_priority)
         persist = dict(best_persist)
         err_sites = list(best_err)
-        # always explore from the BEST board so far — never a mutable running
-        # baseline. A placement move is a trial: it survives only if the full
-        # route (keep-best) accepts it. Cross-board validation showed the old
-        # commit-then-route order let a T3-good but globally-catastrophic move
-        # (helps ~5 stubborn nets, wrecks 111 others) poison the baseline and
-        # the search wander (zuluscsi: routed 101->11, unconnected 45->231).
-        board.write_bytes(best_bytes if best_bytes is not None else pristine)
+        # always explore from the best STRIPPED placement — a placement move is
+        # a trial that survives only if the full route (keep-best) accepts it.
+        # Cross-board validation showed the old commit-then-route order let a
+        # T3-good but globally-catastrophic move poison the baseline and the
+        # search wander (zuluscsi: routed 101->11, unconnected 45->231).
+        board.write_bytes(base_bytes)
         if placement_arm and it > 0:
             # arm 2 v2: ECCF-screened single-part fixes for stubborn nets
             stubborn = {n for n, c in persist.items() if c >= it}
@@ -186,7 +200,7 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                         apply_positions(board, {r: (x, y, ro, fl)
                                                 for r, x, y, ro, fl in moves_list})
                         cost, fail = t3_verify(board, stubborn)
-                        board.write_bytes(pristine)
+                        board.write_bytes(base_bytes)  # reset to this iter's base
                         key = (fail, cost)
                         improves = key < (base_fail, base_cost)
                         if improves and (pick is None or key < pick[0]):
@@ -198,6 +212,10 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                         apply_positions(board, {r: (x, y, ro, fl)
                                                 for r, x, y, ro, fl in moves_list})
                         moved = len(moves_list)
+        # the board is now a STRIPPED placement (base + optional trial move);
+        # capture it before routing so an accepted iteration explores from a
+        # clean placement next time (not the routed copper)
+        trial_placement = board.read_bytes()
         summary = route_board_engine(board, priority=priority,
                                      ripup_factor=8 + 4 * it)
         report = run_drc(board)
@@ -206,9 +224,10 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                      for v in report.get("violations", [])
                      if v["type"] in ("clearance", "hole_clearance")
                      and v.get("items")][:20]
-        score = (drc["unconnected"], drc["by_severity"].get("error", 0))
+        unc, err = drc["unconnected"], drc["by_severity"].get("error", 0)
+        score = _combined(unc, err)
         history.append({"iter": it, "routed": f"{summary['routed']}/{summary['nets']}",
-                        "unconnected": score[0], "errors": score[1],
+                        "unconnected": unc, "errors": err,
                         "boosted": sum(1 for v in priority.values() if v),
                         "moved": moved})
         moved = 0
@@ -216,19 +235,20 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
         for name in summary["failures"]:
             priority[name] = priority.get(name, 0) + 1
             persist[name] = persist.get(name, 0) + 1
-        if best is None or score < best:
-            best, best_bytes = score, board.read_bytes()
-            # snapshot the route-ordering state of the accepted board so only
-            # the improving path's boosts carry forward (stability)
+        if score < best_score:
+            best_score, best = score, (unc, err)
+            base_bytes = trial_placement  # winning STRIPPED placement
+            best_routed = board.read_bytes()  # routed board, for output
+            # snapshot route-ordering state of the accepted board (stability)
             best_priority, best_persist = dict(priority), dict(persist)
             best_err = list(err_sites)
             stall = 0
         else:
             stall += 1
-        if score == (0, 0):
+        if unc == 0 and err == 0:
             break
 
-    if best_bytes is not None:
-        board.write_bytes(best_bytes)
+    if best_routed is not None:
+        board.write_bytes(best_routed)
     return {"best_unconnected": best[0], "best_errors": best[1],
             "iterations": history}
