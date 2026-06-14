@@ -162,6 +162,20 @@ better placement may move the routability needle more cheaply.
   improvement rests on the T3-verified placement/flip arm under keep-best. Engine
   baselines: mitayi 63, zuluscsi 46 (was 115 at R4). UNCONNECTED_WEIGHT=5 tunable. The
   pipeline is now correct/bounded/stable/reproducible — the real deliverable.
+
+## Improving zuluscsi below 46 — ROUTER-THROUGHPUT-BOUND (2026-06-14)
+
+Investigated whether placement/flips can beat zuluscsi's 46. Root cause: zuluscsi's grid is
+901x1001x2 = 1.8M nodes (large board at 0.1mm pitch). A single full route at the 600s
+route_all budget can only do so much in pure-Python A*; the 46-48 is what the router reaches
+in the time budget, NOT a placement limit. Evidence: same board routes 48 (2M cap) vs 68
+(600k cap) — both hitting 603s. So the FIXED 600k expansion cap (tuned for mitayi's 428k
+grid) was REGRESSING zuluscsi; fixed via a grid-proportional cap (~2x node count; 45s/route
+wall-clock is the real runaway guard). Bbox-search-bound shortcut tried and REVERTED — it
+made dense boards worse (routes needing detours fail -> rip-up thrash -> 704s/84 unconnected).
+NEXT LEVER (substantial): a genuinely faster router — coarsen-then-refine (0.2mm pass then
+0.1mm, ~4x fewer cells), numpy-vectorized wavefront (eccf's build_field is the template), or
+Rust. Placement tricks cannot beat a time-truncated route; speed is the gate.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
