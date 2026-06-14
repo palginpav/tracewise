@@ -186,6 +186,17 @@ QUALITY, not speed or timeout — the engine completes nets by shaving clearance
 finding legal paths; every knob (time, pitch, placement) hits this wall. NEXT LEVER (deep,
 fresh session): legality-first routing — reduce escape-shaving reliance / make rip-up prefer
 legal detours over clearance violations. No current knob beats the 48/105 balance net-net.
+
+ERROR-BREAKDOWN DIAGNOSIS (2026-06-14): escape on/off IDENTICAL (60/103) — escape-shaving is
+NOT the cause. zuluscsi's errors are a LONG TAIL, no single fixable bug: items_not_allowed 35
+(router routes through KEEPOUT zones it does not model), solder_mask_bridge 21, shorting 20,
+clearance/hole 22, footprint_type_mismatch+courtyards_overlap 5 (BOARD-INHERENT, not us),
+tracks_crossing only on heavily-routed states (diagonal 45deg X-crossings between adjacent
+cells). CONCRETE NEXT TASKS (each bounded): (1) keepout-zone awareness — parse keepout
+polygons, mark as grid obstacles (~kills 35 items_not_allowed); (2) diagonal-crossing
+prevention — edge-occupancy so two nets' 45deg segments can't cross a shared corner;
+(3) legality-first rip-up cost; (4) faster router for completion. zuluscsi is hard in several
+INDEPENDENT ways; no quick win.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
