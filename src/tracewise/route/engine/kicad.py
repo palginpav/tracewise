@@ -263,7 +263,8 @@ def refill_zones(board: str | Path) -> None:
 def route_board_engine(board: str | Path, pitch: float = 0.1,
                        priority: dict[str, int] | None = None,
                        ripup_factor: int = 8, via_cost: float = 10.0,
-                       engine: str = "ripup", history_factor: float = 1.0) -> dict:
+                       engine: str = "ripup", history_factor: float = 1.0,
+                       synth_power_pours: bool = True) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -275,7 +276,14 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     `history_factor` defaults to 1.0: rip-up deposits congestion history on
     ripped nets and the A* detours around chronically-contested cells. Cross-
     validated win (mitayi combined 401->398; zuluscsi 924->859, unconnected
-    80->64). Set 0.0 for the original pure rip-up."""
+    80->64). Set 0.0 for the original pure rip-up.
+
+    `synth_power_pours` (default ``True``): after the main route + first zone
+    refill, synthesize a low-priority copper pour for every high-fanout power
+    net that has no existing pour.  Pre-existing zones win contested copper
+    (their priority is bumped), so GND fills first and the synthesized power
+    pours take the residual.  Set to ``False`` to reproduce exact pre-F3
+    behaviour (no synthesized pours, no priority changes)."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors = build_problem(data, pitch=pitch,
@@ -300,9 +308,14 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"])
     refill_zones(board)
+    pours_added = 0
+    if synth_power_pours:
+        from tracewise.route.engine.pours import synthesize_power_pours
+        pours_added = synthesize_power_pours(board)
     ok = sum(1 for r in results.values() if r.ok)
     return {
         "nets": len(nets), "routed": ok, "failed": len(nets) - ok,
         "failures": {n: r.reason for n, r in results.items() if not r.ok},
+        "power_pours_added": pours_added,
         **emitted,
     }
