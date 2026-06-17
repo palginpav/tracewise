@@ -42,9 +42,10 @@ def test_pathfinder_connects_simple_net():
 
 def _two_gap_nets():
     g = open_grid(12.0, 12.0, layers=1)
-    g.cells[0, :, 60] = 1  # wall at col 60 ...
-    g.cells[0, 20:30, 60] = 0  # ... wide gap A
-    g.cells[0, 90:100, 60] = 0  # ... wide gap B
+    for plane in (g.cells, g.hard):  # a forbidden wall = actual copper
+        plane[0, :, 60] = 1  # wall at col 60 ...
+        plane[0, 20:30, 60] = 0  # ... wide gap A
+        plane[0, 90:100, 60] = 0  # ... wide gap B
     nets = [
         net("A", [(0, 40, 8), (0, 40, 112)]),  # both nearer gap A
         net("B", [(0, 50, 8), (0, 50, 112)]),
@@ -68,6 +69,7 @@ def test_pathfinder_negotiation_resolves_contention():
 def test_pathfinder_reports_unroutable_explicitly():
     g = open_grid(layers=1)
     g.cells[0, :, 30] = 1  # full wall, no gap
+    g.hard[0, :, 30] = 1  # actual copper -> forbidden
     res = route_all_pathfinder(g, [net("N", [(0, 30, 5), (0, 30, 55)])])
     assert not res["N"].ok and res["N"].reason
 
@@ -75,6 +77,7 @@ def test_pathfinder_reports_unroutable_explicitly():
 def test_pathfinder_respects_forbidden_cells():
     g = open_grid()
     g.cells[0, 30, 30] = 1  # forbidden (pad/keepout) at the would-be crossing
+    g.hard[0, 30, 30] = 1  # actual copper -> forbidden
     res = route_all_pathfinder(g, [net("H", [(0, 30, 4), (0, 30, 56)])])
     assert res["H"].ok
     assert (0, 30, 30) not in res["H"].cells  # routed around the forbidden cell

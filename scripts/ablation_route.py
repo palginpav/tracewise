@@ -49,10 +49,10 @@ def run_mode(project: Path, mode: str) -> dict:  # noqa: C901
     pro_original = pro.read_text(encoding="utf-8") if pro else None
 
     strip_routing(board)
-    if mode == "engine":
+    if mode in ("engine", "pathfinder"):
         from tracewise.route.engine.kicad import route_board_engine
 
-        route_board_engine(board)
+        route_board_engine(board, engine="pathfinder" if mode == "pathfinder" else "ripup")
     else:
         if mode == "constrained" and sch is not None:
             nl = parse_netlist(export_netlist(sch))

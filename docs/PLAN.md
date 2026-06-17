@@ -211,6 +211,25 @@ forces connections through violations (the signature of every measured wall). Bu
 PathFinder negotiated-congestion loop around the existing A* (price overuse, iterate) + the
 diagonal X-crossing edge resource. Spike proved it: forbid-wall -> 3 shorts, PathFinder -> 0
 in 3 iters. The principled path below 46, reusing the A* almost verbatim.
+- [x] PathFinder router BUILT (src/.../pathfinder.py) + wired into route_board_engine
+  (engine="pathfinder"). Synthetic tests pass: prices contention, splits two nets across two
+  gaps to zero overlap, neg-congestion mechanism sound. Obstacle model reworked to mirror the
+  rip-up router's hard/halo split (only grid.hard forbidden; fixed-pad clearance halos
+  enterable at a constant escape premium) — without it every pad sealed by neighbour clearance
+  was "no path" (first mitayi run: 0/61, 18 no-path).
+- [!] MEASURED ON MITAYI — NEGATIVE: with the escape model the no-path class vanishes (0), but
+  negotiation does NOT converge. 1/61 "ok", 60 "congested" after 24 iters / **1584s (26 min)**.
+  Two verdicts: (a) the board is congestion-limited — a conflict-free 2-layer embedding of a
+  dense single-sided layout may not exist, so "everyone vacates contested cells" has nowhere to
+  vacate to; (b) per-iteration cost (full A* reroute of 60 nets on a ~1.8M-cell grid, no time
+  cap) makes even an eventual convergence impractical (~hours). And PathFinder only EMITS
+  clearance-legal nets, so its best effort lays an almost-empty board (8 segs) vs rip-up's
+  60/61 @ ~82 DRC errors. Apples-to-oranges by construction: rip-up lays copper + reports
+  violations; PathFinder discards anything it can't make legal.
+  CONCLUSION: PathFinder as a drop-in zero-overlap router does NOT beat rip-up here. The
+  negotiated-congestion PRICING is still worth salvaging as a heuristic INSIDE rip-up (order
+  victims / bias A* by priced contention) rather than as a hard acceptance gate. Router-as-
+  router parked; pricing-as-heuristic is the open lever.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.

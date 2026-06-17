@@ -262,11 +262,15 @@ def refill_zones(board: str | Path) -> None:
 
 def route_board_engine(board: str | Path, pitch: float = 0.1,
                        priority: dict[str, int] | None = None,
-                       ripup_factor: int = 8, via_cost: float = 10.0) -> dict:
-    """End-to-end: extract -> grid -> route_all -> emit. Returns a summary.
+                       ripup_factor: int = 8, via_cost: float = 10.0,
+                       engine: str = "ripup") -> dict:
+    """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
-    use the back layer as a bypass lane (F->B->F) past congestion."""
+    use the back layer as a bypass lane (F->B->F) past congestion.
+
+    `engine` selects the router: "ripup" (bounded rip-up-and-reroute, the
+    default) or "pathfinder" (negotiated-congestion pricing)."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors = build_problem(data, pitch=pitch,
@@ -279,8 +283,13 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
         (geo["via_mm"] / 2 + geo["clearance_mm"] + geo["track_mm"] / 2) / pitch))
     for n in nets:
         n.via_halfwidth_cells = via_half
-    results = route_all(grid, nets, escape=12, priority=priority,
-                        ripup_factor=ripup_factor, via_cost=via_cost)
+    if engine == "pathfinder":
+        from tracewise.route.engine.pathfinder import route_all_pathfinder
+        results = route_all_pathfinder(grid, nets, via_cost=via_cost,
+                                       priority=priority)
+    else:
+        results = route_all(grid, nets, escape=12, priority=priority,
+                            ripup_factor=ripup_factor, via_cost=via_cost)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"])

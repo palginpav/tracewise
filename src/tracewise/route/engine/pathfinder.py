@@ -92,11 +92,15 @@ def _dilate(a: np.ndarray, r: int) -> np.ndarray:
     return d
 
 
-def _astar(hard, occ, hist, start, goals: set, via_cost, h_fac, p_fac,
-           max_expansions: int):
-    """Soft-cost A* to the nearest goal. `hard` (bool) cells are forbidden
-    unless they are a goal; every other cell is enterable, priced by
-    move*(1+h*hist)*(1+p*occ). Octile heuristic (admissible: min step = move)."""
+def _astar(hard, fixed, occ, hist, start, goals: set, via_cost, h_fac, p_fac,
+           fixed_pen, max_expansions: int):
+    """Soft-cost A* to the nearest goal. `hard` (bool, actual copper/keepout)
+    cells are forbidden unless they are a goal. `fixed` marks fixed-pad
+    clearance halos: enterable at a CONSTANT premium (escape, generalised) so a
+    pad sealed by its neighbours' clearance can still be left, while the price
+    does not escalate with the negotiation. Inter-net congestion (`occ`) and
+    history escalate. Cost = move*(1+fixed_pen*fixed)*(1+h*hist)*(1+p*occ).
+    Octile heuristic (admissible: min step = move)."""
     L, H, W = hard.shape
 
     def heur(node):
@@ -142,7 +146,9 @@ def _astar(hard, occ, hist, start, goals: set, via_cost, h_fac, p_fac,
             is_goal = nxt in goals
             if not is_goal and hard[nl2, iy, ix]:
                 continue
-            step = mv if is_goal else mv * (1.0 + h_fac * hist[nl2, iy, ix]) * (
+            step = mv if is_goal else mv * (
+                1.0 + fixed_pen * fixed[nl2, iy, ix]) * (
+                1.0 + h_fac * hist[nl2, iy, ix]) * (
                 1.0 + p_fac * occ[nl2, iy, ix])
             ng = gc + step
             if ng < g.get(nxt, math.inf):
@@ -152,15 +158,18 @@ def _astar(hard, occ, hist, start, goals: set, via_cost, h_fac, p_fac,
     return None
 
 
-def _route_one(hard, occ, hist, net: Net, via_cost, h_fac, p_fac, max_exp):
+def _route_one(hard, fixed, occ, hist, net: Net, via_cost, h_fac, p_fac,
+               fixed_pen, max_exp):
     """Route a net's connection tree on the soft surface. Own pads are carved
-    from `hard` by the caller. Returns (_Net) or None on a real no-path."""
+    from `hard`/`fixed` by the caller. Returns (_Net) or None on a real
+    no-path."""
     out = _Net(net.name)
     tree = {net.pads[0]}
     for pad in net.pads[1:]:
         if pad in tree:
             continue
-        path = _astar(hard, occ, hist, pad, tree, via_cost, h_fac, p_fac, max_exp)
+        path = _astar(hard, fixed, occ, hist, pad, tree, via_cost, h_fac, p_fac,
+                      fixed_pen, max_exp)
         if path is None:
             return None
         out.paths.append(path)
@@ -175,15 +184,21 @@ def _route_one(hard, occ, hist, net: Net, via_cost, h_fac, p_fac, max_exp):
 def route_all_pathfinder(
     grid: Grid, nets: list[Net], via_cost: float = 10.0, priority=None,
     iters: int = 24, h_fac: float = 0.5, p_growth: float = 1.8,
-    max_expansions: int | None = None,
+    fixed_pen: float = 4.0, max_expansions: int | None = None,
 ) -> dict[str, NetRoute]:
     """Negotiated-congestion routing. A net is `ok` iff its tree is built AND
     none of its halo cells is over-used at convergence — an ok route is
-    clearance-respecting and short-free by construction."""
+    clearance-respecting and short-free by construction.
+
+    Obstacle model mirrors the rip-up router's hard/halo split: only actual
+    copper and keepouts (`grid.hard`) are forbidden; fixed-pad clearance halos
+    (`grid.cells` minus `grid.hard`) are enterable at the constant `fixed_pen`
+    premium so pads sealed by their neighbours' clearance can still escape."""
     if max_expansions is None:
         max_expansions = 2 * grid.layers * grid.ny * grid.nx
     L, H, W = grid.cells.shape
-    base_hard = grid.cells > 0  # inflated pads + keepouts -> forbidden
+    base_hard = grid.hard > 0  # actual copper + keepouts -> forbidden
+    fixed = ((grid.cells > 0) & (grid.hard == 0)).astype(np.float64)  # clearance halos -> priced
     occ = np.zeros((L, H, W), np.int32)
     hist = np.zeros((L, H, W), np.float64)
 
@@ -193,12 +208,19 @@ def route_all_pathfinder(
     state: dict[str, _Net] = {}
 
     def carve(net: Net, on: bool):
-        # un-/re-forbid the net's own pad footprints so it can leave its pads
+        # free the net's own pad footprints (copper AND clearance) so it can
+        # leave its pads; restore the fixed obstacle state afterwards
         for layer, x1, y1, x2, y2, inf in getattr(net, "carve", ()):
             cy1, cx1 = grid.to_cell(min(x1, x2) - inf, min(y1, y2) - inf)
             cy2, cx2 = grid.to_cell(max(x1, x2) + inf, max(y1, y2) + inf)
             sl = (slice(max(0, cy1), min(H, cy2 + 1)), slice(max(0, cx1), min(W, cx2 + 1)))
-            base_hard[layer][sl] = False if on else (grid.cells[layer][sl] > 0)
+            if on:
+                base_hard[layer][sl] = False
+                fixed[layer][sl] = 0.0
+            else:
+                base_hard[layer][sl] = grid.hard[layer][sl] > 0
+                fixed[layer][sl] = ((grid.cells[layer][sl] > 0)
+                                    & (grid.hard[layer][sl] == 0)).astype(np.float64)
 
     def commit(net: Net, r: _Net, delta: int):
         for c in r.halo:
@@ -223,8 +245,8 @@ def route_all_pathfinder(
             hw = net.halfwidth_cells
             occ_cost = _dilate(occ, hw)
             hist_cost = _dilate(hist, hw)
-            r = _route_one(base_hard, occ_cost, hist_cost, net, via_cost, h_fac,
-                           p_fac, max_expansions)
+            r = _route_one(base_hard, fixed, occ_cost, hist_cost, net, via_cost,
+                           h_fac, p_fac, fixed_pen, max_expansions)
             carve(net, False)
             if r is None:
                 state[net.name] = _Net(net.name)  # failed: no cells
