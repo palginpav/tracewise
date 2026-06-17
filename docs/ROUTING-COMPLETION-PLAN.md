@@ -78,3 +78,32 @@ improves and the others hold.
 - F0 fragility → if the pcbnew API is awkward, F2 slips. Mitigation: F0 is its own gated phase.
 - F3 may have a real 2-layer ceiling (pour-less 58-pad net); partial wins acceptable, documented.
 - Geometry bugs (the Y-coord-swap class): every geometry change ships with a fixture unit test.
+
+## STATUS UPDATE (2026-06-17): F0 shipped; F2 approach FALSIFIED, reverted; model corrected
+
+- **F0 SHIPPED** (commit ecc9587): pcbnew-based pour geometry extraction (`extract_pours`,
+  `rasterize_pour`) — sound, 12 tests, source-vs-resaved invariant holds. KEPT.
+- **F2 (stub-stitch) FALSIFIED and reverted.** Two implementation rounds capped at zuluscsi
+  GND 22→20 (only 2 pads stitched), mitayi no regression. Root cause found by direct diagnosis:
+  the stitch worklist used `unconnected_pads` (pcbnew `IsConnectedOnLayer`), which reports only
+  **2** isolated GND pads, while DRC ratsnest reports **22**. The gap: `IsConnectedOnLayer`
+  calls a pad "connected" when it touches ANY pour copper — including a DISCONNECTED pour
+  island. So the real problem was mis-modelled.
+- **CORRECTED PROBLEM MODEL (decisive — the 22 GND ratsnest gaps):**
+    - 10 gaps are **zone↔zone at 0.0mm** — the GND pour fragmented into ISLANDS separated by
+      hairline clearance; they need island BRIDGING (a via/short bridge at the gap), not pad stubs.
+    - 12 gaps are **far** (median 44.9mm, max 93.4mm) — real cross-board GND routing.
+    - Almost none are "isolated pad near pour needing a short stub" — F2's entire premise.
+- **Consequences for the plan:**
+    - F0's `unconnected_pads` is the WRONG signal (IsConnectedOnLayer misses island
+      fragmentation). A future feature must use the RATSNEST (DRC unconnected_items) as the
+      worklist, not IsConnectedOnLayer.
+    - The GND floor (22) really decomposes into: ~10 pour-island bridges + ~12 high-fanout GND
+      routes. The +3V0 floor (56) is pour-less high-fanout. So the dominant remaining work is
+      TWO new capabilities: (1) pour-island bridging (cheapest next lever — 0mm gaps), and
+      (2) high-fanout power/ground net routing (the hard, dominant part). Stub-stitching is NOT
+      the lever and is removed.
+- **NEXT (re-scoped):** F2' = pour-island bridging driven off the DRC ratsnest (target the 10
+  zone↔zone 0mm GND gaps; likely a via/short bridge where two same-net islands abut). Measure;
+  if it cleanly fixes the island gaps, generalise. The 12 far GND + 56 +3V0 remain the
+  high-fanout routing problem (F3-class), genuinely hard on 2 layers.
