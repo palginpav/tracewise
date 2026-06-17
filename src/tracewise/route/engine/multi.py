@@ -72,7 +72,8 @@ def order_nets(nets: list[Net], priority: dict[str, int] | None = None) -> list[
                                        0 if POWER.match(n.name) else 1, _bbox_size(n)))
 
 
-def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> NetRoute:
+def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0,
+              history=None, history_factor: float = 0.0) -> NetRoute:
     nr = NetRoute(net=net)
     if len(net.pads) < 2:
         nr.ok = True  # nothing to connect
@@ -83,7 +84,8 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0) -> 
     for pad in net.pads[1:]:
         if pad in tree:
             continue
-        res: RouteResult = route(grid, pad, tree, via_cost=via_cost, escape=escape)
+        res: RouteResult = route(grid, pad, tree, via_cost=via_cost, escape=escape,
+                                 history=history, history_factor=history_factor)
         if not res.ok:
             nr.reason = f"pad {pad}: {res.reason}"
             nr.cells.clear()
@@ -124,19 +126,29 @@ def _nearest_victim(failed: Net, routed: list[NetRoute]) -> NetRoute | None:
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               ripup_factor: int = 8, escape: int = 0,
               priority: dict[str, int] | None = None,
-              time_budget_s: float = 600.0) -> dict[str, NetRoute]:
+              time_budget_s: float = 600.0,
+              history_factor: float = 0.0) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
     `time_budget_s` is a hard wall-clock cap: on a dense board the rip-up loop
     can thrash (A* hitting its expansion cap repeatedly). When the deadline is
     hit, remaining nets are returned as explicit failures rather than hanging
-    the pipeline — a measured robustness need (a route once ran 21 min)."""
+    the pipeline — a measured robustness need (a route once ran 21 min).
+
+    `history_factor` > 0 turns on negotiated-congestion pricing (salvaged from
+    the PathFinder experiment): each rip-up deposits congestion history on the
+    victim's cells, and subsequent routes are nudged around those chronically-
+    contested regions. 0 (default) reproduces the original pure rip-up."""
     import time
+
+    import numpy as np
 
     deadline = time.monotonic() + time_budget_s
     results: dict[str, NetRoute] = {}
     routed: list[NetRoute] = []
     budget = ripup_factor * max(len(nets), 1)
+    history = (np.zeros((grid.layers, grid.ny, grid.nx), np.float64)
+               if history_factor > 0.0 else None)
 
     queue = order_nets(nets, priority)
     attempts: dict[str, int] = {}
@@ -146,7 +158,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         net = queue.pop(0)
         budget -= 1
         attempts[net.name] = attempts.get(net.name, 0) + 1
-        nr = route_net(grid, net, via_cost=via_cost, escape=escape)
+        nr = route_net(grid, net, via_cost=via_cost, escape=escape,
+                       history=history, history_factor=history_factor)
         if nr.ok:
             _mark(grid, nr, 1)
             routed.append(nr)
@@ -155,6 +168,9 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         if attempts[net.name] <= 10:
             victim = _nearest_victim(net, routed)
             if victim is not None:
+                if history is not None:  # the contested corridor gets pricier
+                    for layer, iy, ix in victim.cells:
+                        history[layer, iy, ix] += 1.0
                 _mark(grid, victim, -1)
                 routed.remove(victim)
                 results.pop(victim.net.name, None)

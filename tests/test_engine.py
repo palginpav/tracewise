@@ -47,6 +47,21 @@ def test_route_straight_line_empty_grid():
     assert r.cost == pytest.approx(80.0)  # straight, no diagonal needed
 
 
+def test_history_biases_route_around_contested_cells():
+    # a band of congestion history across the straight-line corridor: the route
+    # must detour around it rather than pay the priced cells (negotiated
+    # congestion salvaged into the A*). With no history it goes straight.
+    import numpy as np
+    g = make_grid()
+    hist = np.zeros((g.layers, g.ny, g.nx), np.float64)
+    hist[0, 8:13, 50] = 50.0  # chronically-contested column straddling the line
+    straight = route(g, (0, 10, 10), {(0, 10, 90)})
+    detour = route(g, (0, 10, 10), {(0, 10, 90)}, history=hist, history_factor=1.0)
+    assert straight.ok and detour.ok
+    assert (0, 10, 50) in straight.path  # baseline crosses the contested cell
+    assert (0, 10, 50) not in detour.path  # priced route steps around it
+
+
 def test_route_around_obstacle():
     g = make_grid(layers=1)  # single layer: no via shortcut, must detour
     g.block_rect(0, 4.0, 0.0, 5.0, 9.0)  # wall with a gap at the top

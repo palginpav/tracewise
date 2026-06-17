@@ -52,6 +52,8 @@ def route(
     escape: int = 0,
     escape_penalty: float = 4.0,
     max_seconds: float = 45.0,
+    history=None,
+    history_factor: float = 0.0,
 ) -> RouteResult:
     """A* from start to the nearest of `goals`. Cells in `goals` need not be
     free (pads are blocked for other nets but are this net's targets).
@@ -59,7 +61,15 @@ def route(
     `max_expansions` defaults to ~2x the grid node count so it never cuts a
     legitimate route (a fixed 600k cut zuluscsi's 1.8M-node grid: 48->68
     unconnected); the per-route wall-clock (`max_seconds`) is the real runaway
-    guard, not the expansion ceiling."""
+    guard, not the expansion ceiling.
+
+    `history` (per-cell float array, optional) prices chronically-contested
+    cells: each step cost is scaled by (1 + history_factor*history[cell]). This
+    is the negotiated-congestion idea salvaged INTO rip-up — a net is nudged
+    around regions that keep causing rip-ups, without giving up rip-up's 'always
+    lay copper' behaviour. The heuristic stays history-free (admissible: the
+    scaled cost is never below the base octile distance)."""
+    priced = history is not None and history_factor > 0.0
     if max_expansions is None:
         max_expansions = 2 * grid.layers * grid.ny * grid.nx
     if not goals:
@@ -148,7 +158,10 @@ def route(
                     neighbors.append((nxt, via_cost))
 
         for nxt, c in neighbors:
-            ng = g + c
+            # history scales the base step cost; escape detection below stays on
+            # the BASE c so a pricing nudge is never misread as clearance-shaving
+            eff = c * (1.0 + history_factor * history[nxt]) if priced else c
+            ng = g + eff
             if ng < gscore.get(nxt, math.inf):
                 gscore[nxt] = ng
                 came[nxt] = node
