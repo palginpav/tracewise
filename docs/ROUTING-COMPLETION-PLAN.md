@@ -132,3 +132,20 @@ this floor. The F3 survey's "synthesize a +3V0 pour" idea remains the one UNTRIE
 angle, but note it reduces to the same routing problem once the pour fragments (as GND's does).
 
 Process win: probe-before-build on F2' avoided a second wasted module — the F2 lesson applied.
+
+## F3 SHIPPED (2026-06-17): synthesize pours for high-fanout power nets — first floor break
+
+Probe-validated then built (commit 328400e). `synthesize_power_pours` adds a board-outline zone
+at LOW priority for each power net (POWER regex, >=8 pads, no existing pour); the GND pour
+(bumped to higher priority) wins contested copper, the power net fills the residual and connects
+the bulk of its pads via the fill. Integrated as `route_board_engine(synth_power_pours=True)`.
+MEASURED (cross-board gate):
+  zuluscsi  84 -> 65  (+3V0 56 -> 37, GND 22 held, SCSI 6 held)  errors 108->108  viol 562->562
+  mitayi    63 -> 63  (no change: back fully GND-poured, no residual copper for a +3V3 pour)
+            viol 82 -> 80  — NO regression.
+First measured break of the unconnected floor (zuluscsi −23%) with ZERO new violations. Works
+where copper is available (zuluscsi), neutral where GND owns all copper (mitayi's poured back).
+Residual zuluscsi 65 = +3V0 37 (fragmentation tail) + GND 22 + SCSI 6 — the hard high-fanout
+routing tail remains, but the pour-synthesis lever is real and shipped.
+Process: F0 (extract) + F3 (synthesize) are the durable wins from the pour line; F2/F2'
+(stub/bridge) stay falsified. Probe-before-build worked a third time.
