@@ -23,15 +23,6 @@ SQRT2 = math.sqrt(2.0)
 VIA_RING = 2  # via copper outsticks track copper; demand extra free ring (cells)
 
 
-def _via_ok(grid: Grid, iy: int, ix: int) -> bool:
-    """Via placement needs more room than a track centerline: the barrel
-    radius exceeds the track halfwidth the cell grid budgets for."""
-    for layer in range(grid.layers):
-        for dy in range(-VIA_RING, VIA_RING + 1):
-            for dx in range(-VIA_RING, VIA_RING + 1):
-                if not grid.free(layer, iy + dy, ix + dx):
-                    return False
-    return True
 DIRS = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
         (-1, -1, SQRT2), (-1, 1, SQRT2), (1, -1, SQRT2), (1, 1, SQRT2)]
 
@@ -114,6 +105,32 @@ def route(
             best = min(best, d)
         return best
 
+    # Snapshot the grid arrays once: they are static for the whole search, so
+    # the hot neighbor loop can index them directly instead of going through
+    # grid.free / grid.halo_only / grid.in_bounds (three Python calls per cell,
+    # the profile's #2-#4 costs after the heuristic). `cells` is the int16
+    # obstacle count (0 == free); `hard` is the copper-only count.
+    cells = grid.cells
+    hard = grid.hard
+    L, H, W = cells.shape
+    VR = VIA_RING
+
+    def passable(layer, iy, ix, near):
+        # 0.0 free, escape_penalty if a halo-only cell near an endpoint, else None
+        if 0 <= iy < H and 0 <= ix < W:
+            if cells[layer, iy, ix] == 0:
+                return 0.0
+            if near and hard[layer, iy, ix] == 0:
+                return escape_penalty
+        return None
+
+    def via_ok(iy, ix):
+        # via needs a clear VIA_RING-cell ring on EVERY layer; a ring that runs
+        # off the board is rejected (matches the old per-cell out-of-bounds fail)
+        if iy - VR < 0 or iy + VR >= H or ix - VR < 0 or ix + VR >= W:
+            return False
+        return not cells[:, iy - VR:iy + VR + 1, ix - VR:ix + VR + 1].any()
+
     open_q: list[tuple[float, float, tuple[int, int, int]]] = [(h(start), 0.0, start)]
     came: dict[tuple[int, int, int], tuple[int, int, int] | None] = {start: None}
     gscore: dict[tuple[int, int, int], float] = {start: 0.0}
@@ -150,13 +167,6 @@ def route(
             max(abs(ny - sy), abs(nx - sx)) < escape or h(node) < escape
         )
 
-        def passable(layer, iy, ix, _near=near_end):
-            if grid.free(layer, iy, ix):
-                return 0.0
-            if _near and grid.halo_only(layer, iy, ix):
-                return escape_penalty
-            return None
-
         neighbors = []
         for dy, dx, c in DIRS:
             iy, ix = ny + dy, nx + dx
@@ -164,18 +174,19 @@ def route(
             if nxt in goals:
                 neighbors.append((nxt, c))
                 continue
-            pen = passable(nl, iy, ix)
+            pen = passable(nl, iy, ix, near_end)
             if pen is None:
                 continue
             if dy and dx:  # no corner cutting: a 45° segment between free cells
                 # still clips a blocked corner cell's halo in continuous geometry
-                if passable(nl, ny, ix) is None or passable(nl, iy, nx) is None:
+                if (passable(nl, ny, ix, near_end) is None
+                        or passable(nl, iy, nx, near_end) is None):
                     continue
             neighbors.append((nxt, c + pen))
-        for layer in range(grid.layers):  # via: change layer in place
+        for layer in range(L):  # via: change layer in place
             if layer != nl:
                 nxt = (layer, ny, nx)
-                if nxt in goals or (grid.free(layer, ny, nx) and _via_ok(grid, ny, nx)):
+                if nxt in goals or (cells[layer, ny, nx] == 0 and via_ok(ny, nx)):
                     neighbors.append((nxt, via_cost))
 
         for nxt, c in neighbors:
