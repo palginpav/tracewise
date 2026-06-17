@@ -132,7 +132,8 @@ def nudge_placement(board: Path, failed_nets: set[str], weight: float = 4.0) -> 
     return len(r["positions"])
 
 
-def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True) -> dict:
+def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True,
+               flip_stall_gate: int = 2) -> dict:
     board = Path(board)
     pristine = board.read_bytes()  # caller provides the STRIPPED board
     priority: dict[str, int] = {}
@@ -180,7 +181,7 @@ def auto_route(board: str | Path, max_iters: int = 5, placement_arm: bool = True
                 # fully-poured backs like mitayi; T3+keep-best remains the
                 # arbiter for boards above the threshold)
                 from tracewise.route.engine.eccf import back_free_fraction, t3_verify
-                flip_now = stall >= 2 and back_free_fraction(board) >= 0.01
+                flip_now = stall >= flip_stall_gate and back_free_fraction(board) >= 0.01
                 scored = eccf_candidates(board, stubborn, error_sites=err_sites,
                                          include_flips=flip_now)
                 # split quota so combos cannot crowd the proven single moves out
