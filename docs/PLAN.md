@@ -306,6 +306,31 @@ grid.free 99s, _via_ok 87s, passable 56s.
   under budget for more rip-up headroom. Determinism (the goal) is already met.
 - NEXT (placement, now unblocked): re-run the auto loop flip arm on zuluscsi with deterministic
   routes — the experiment that was blocked is now measurable.
+
+## Placement floor DIAGNOSED — it's pour-class nets, not placement (2026-06-17)
+
+Re-ran the auto loop flip arm on zuluscsi with the deterministic router (flip_stall_gate=0,
+5 iters). CLEAN result (no timing noise): every iteration byte-identical
+(routed 112/116, unc 84, err 108), moved=0 throughout. So even fired aggressively from it1,
+NO flip improves the stubborn set. Then dumped the 4 failing nets + pad counts:
+  GND: 171 pads | +3V0: 58 pads | ~{SCSI_DB4}: 5 | ~{SCSI_DB2}: 5
+TWO of the four are POUR-CLASS (GND 171, +3V0 58) — they connect through copper ZONES, not
+point-to-point traces. The router trace-routes them and fails (171 GND pads is hopeless), and
+t3_verify excludes >10-pad nets, so the placement arm structurally CANNOT touch them — hence
+moved=0 is correct, not a bug. The "unconnected floor" on zuluscsi was never a placement
+problem; it is pour-class net handling. The determinism work is what made this diagnosable
+(under noise, moved=0 looked like it might be measurement error).
+- Also separately: the second router optimization landed. After the heuristic fix,
+  grid.free/_via_ok/passable were the top profile costs. Vectorized the via-ring check (50
+  scalar grid.free calls -> one numpy slice) and lifted the passable closure out of the
+  21M-iteration per-node loop. mitayi 196s -> 134s (290s baseline => -54% total), routed 39 /
+  unc 63 held; zuluscsi still 112/116 deterministic.
+- REAL NEXT LEVER (reframed): POUR-CLASS NET HANDLING. GND/power should connect via the zone
+  pour (refill_zones runs, but their pads still read unconnected — either the pour doesn't reach
+  all pads / thermal reliefs, or the engine should EXCLUDE pour-net pads from trace routing and
+  let the fill connect them). Fixing this likely clears the bulk of zuluscsi's 84 (GND+3V0 =
+  229 of the failing pads). The 2 small SCSI nets (5 pads each) are a separate, minor stubborn
+  case. Placement refinement is CLOSED as a floor-breaker for these boards.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
