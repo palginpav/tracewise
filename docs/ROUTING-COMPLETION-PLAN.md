@@ -103,7 +103,32 @@ improves and the others hold.
       TWO new capabilities: (1) pour-island bridging (cheapest next lever — 0mm gaps), and
       (2) high-fanout power/ground net routing (the hard, dominant part). Stub-stitching is NOT
       the lever and is removed.
-- **NEXT (re-scoped):** F2' = pour-island bridging driven off the DRC ratsnest (target the 10
-  zone↔zone 0mm GND gaps; likely a via/short bridge where two same-net islands abut). Measure;
-  if it cleanly fixes the island gaps, generalise. The 12 far GND + 56 +3V0 remain the
-  high-fanout routing problem (F3-class), genuinely hard on 2 layers.
+- **F2' (island bridging) also FALSIFIED — cheaply, by a probe before building.** Hypothesis:
+  a GND via at each 0mm zone↔zone gap merges the islands. Probe (place 9 GND vias at the
+  zero-gap positions on /tmp/g2_off, refill, re-DRC): GND stayed at 22 — NO change. The 0mm
+  gaps are NOT hairline clearance slivers; the GND pour islands are separated by OTHER nets'
+  traces crossing the GND region. You cannot bridge across another net's copper (short). The
+  islands can only be joined by routing GND copper AROUND the crossing trace (a detour, or
+  via→opposite-layer→around→via-back) — i.e. real routing, same as the far gaps.
+
+## CONSOLIDATED CONCLUSION (2026-06-17): the floor is high-fanout routing; no pour-side trick
+
+Three approaches tried and falsified by measurement:
+  1. F2 stub-stitch (pad → nearest pour): GND 22→20. Wrong model (ratsnest fragmentation, not
+     isolated pads).
+  2. F2' island via-bridge (via at 0mm gaps): GND 22→22. Islands split by crossing traces, not
+     clearance slivers.
+  3. (prior) placement flips/nudges: moved nothing (floor isn't placement).
+THE FLOOR IS A HIGH-FANOUT ROUTING PROBLEM. zuluscsi 84 = GND 22 (fragmented, needs GND routed
+around obstacles / across board) + +3V0 56 (pour-less 58-pad net, needs routing) + SCSI 6. None
+has a cheap pour-side or placement-side fix. The single remaining lever is genuinely routing
+these high-fanout power/ground nets through a congested 2-layer board — hard, and possibly at a
+real 2-layer ceiling for some connections.
+
+What SHIPPED and stands: the router speedup (−54%, determinism), congestion pricing (default on),
+and F0 pour extraction (reusable IF a future high-fanout-routing feature wants pour geometry).
+What's CLOSED: stub-stitch, island via-bridge, placement refinement — all measured dead-ends for
+this floor. The F3 survey's "synthesize a +3V0 pour" idea remains the one UNTRIED principled
+angle, but note it reduces to the same routing problem once the pour fragments (as GND's does).
+
+Process win: probe-before-build on F2' avoided a second wasted module — the F2 lesson applied.
