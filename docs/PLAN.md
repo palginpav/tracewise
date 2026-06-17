@@ -331,6 +331,29 @@ problem; it is pour-class net handling. The determinism work is what made this d
   let the fill connect them). Fixing this likely clears the bulk of zuluscsi's 84 (GND+3V0 =
   229 of the failing pads). The 2 small SCSI nets (5 pads each) are a separate, minor stubborn
   case. Placement refinement is CLOSED as a floor-breaker for these boards.
+
+## zuluscsi unconnected-84 breakdown — DECISIVE (2026-06-17)
+
+Parsed the DRC unconnected_items by net (descriptions carry [net]). NOT what the pad-count
+diagnostic implied:
+  +3V0: 56 (67%) | GND: 22 (26%) | ~{SCSI_DB4}: 3 | ~{SCSI_DB2}: 3
+- +3V0 (DOMINANT): 58-pad power net with NO pour (original zuluscsi has zones only for
+  GND/EMIGND — confirmed). So +3V0 is meant to be TRACE-routed (the human does), and our router
+  completes only 2/58. This is a genuine HIGH-FANOUT trace-routing capability gap, NOT a pour
+  issue — and it is 2/3 of the floor. Hard on a 2-layer board where GND already pours both sides.
+- GND (22): has an 85-poly pour spanning F&B; refill_zones fills it correctly (pcbnew
+  ZONE_FILLER), but 22 GND pads are isolated from the fill (carved off by neighbour clearance in
+  dense regions / pour fragmented into islands). STITCHABLE: connect each isolated GND pad to the
+  nearest pour copper with a short stub. Needs robust pour rasterization — note the zone net_name
+  parse works on the source board but returns NONE on a pcbnew-resaved board (format variance);
+  a stitch feature must read pour geometry robustly (likely via pcbnew connectivity API, not
+  s-expr net_name).
+- SCSI_DB2/DB4 (6): small stubborn signal nets — more rip-up / congestion pricing territory.
+- HONEST SCOPING: even perfect GND stitching is only 84->62 (−22). The +3V0 56 dominates and is
+  the hard part (high-fanout trace routing, or a design-level +3V0 partial pour). Two distinct
+  features, neither a quick patch. Placement is confirmed irrelevant. This is a clean checkpoint:
+  the session shipped the router speedup (−54%, determinism) + congestion pricing, and replaced a
+  vague "placement floor" with a precise, net-level diagnosis of exactly what blocks completion.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
