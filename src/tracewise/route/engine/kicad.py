@@ -263,14 +263,19 @@ def refill_zones(board: str | Path) -> None:
 def route_board_engine(board: str | Path, pitch: float = 0.1,
                        priority: dict[str, int] | None = None,
                        ripup_factor: int = 8, via_cost: float = 10.0,
-                       engine: str = "ripup", history_factor: float = 0.0) -> dict:
+                       engine: str = "ripup", history_factor: float = 1.0) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
     use the back layer as a bypass lane (F->B->F) past congestion.
 
     `engine` selects the router: "ripup" (bounded rip-up-and-reroute, the
-    default) or "pathfinder" (negotiated-congestion pricing)."""
+    default) or "pathfinder" (negotiated-congestion pricing).
+
+    `history_factor` defaults to 1.0: rip-up deposits congestion history on
+    ripped nets and the A* detours around chronically-contested cells. Cross-
+    validated win (mitayi combined 401->398; zuluscsi 924->859, unconnected
+    80->64). Set 0.0 for the original pure rip-up."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors = build_problem(data, pitch=pitch,

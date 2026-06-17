@@ -243,6 +243,13 @@ in 3 iters. The principled path below 46, reusing the A* almost verbatim.
   not router thrash. Confirms the standing diagnosis — mitayi is placement-limited; routing-side
   levers improve route QUALITY but cannot break the unconnected floor. hf=1.0 is the best
   point (most nets, fewest violations). Cross-board (zuluscsi) validation before defaulting on.
+  CROSS-VALIDATED ON ZULUSCSI (the denser 1.8M-cell board) — clearer win:
+    hf=0.0  routed 89/116  unconn 80  viol 524  vias 170  len 2382  combined 924
+    hf=1.0  routed 95/116  unconn 64  viol 539  vias 224  len 2893  combined 859
+  unconnected 80→64 (−20%), combined 924→859 (−7%), +6 nets. Cost: more vias/length (detours
+  use layer changes to reach legal corridors). Improves on BOTH boards, regresses neither →
+  history_factor DEFAULT FLIPPED TO 1.0 in route_board_engine (flows to the auto loop). The
+  unconnected floor still ultimately placement-bound; this is the routing-side ceiling raised.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
