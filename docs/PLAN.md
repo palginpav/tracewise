@@ -230,6 +230,19 @@ in 3 iters. The principled path below 46, reusing the A* almost verbatim.
   negotiated-congestion PRICING is still worth salvaging as a heuristic INSIDE rip-up (order
   victims / bias A* by priced contention) rather than as a hard acceptance gate. Router-as-
   router parked; pricing-as-heuristic is the open lever.
+- [x] PRICING SALVAGED INTO RIP-UP (history_factor): each rip-up deposits congestion history on
+  the victim's cells; the A* step cost is scaled by (1 + history_factor*history[cell]) so later
+  routes detour around chronically-contested regions. Default 0 = original pure rip-up.
+  MEASURED ON MITAYI (route+DRC, taskset 0-9):
+    hf=0.0  routed 35/61  unconn 63  viol 86  vias 74  len 608   combined 401
+    hf=0.5  routed 38/61  unconn 62  viol 89  vias 55  len 517   combined 399
+    hf=1.0  routed 39/61  unconn 63  viol 83  vias 58  len 572   combined 398
+  READ: pricing lays MORE copper, CLEANER — routed nets 35→39 (+11%), vias 74→58 (−22%),
+  shorter length, viol −3 at hf=1.0. But combined score barely moves (401→398, <1%) because the
+  UNCONNECTED FLOOR is flat (63→62→63): those nets are blocked by genuine placement congestion,
+  not router thrash. Confirms the standing diagnosis — mitayi is placement-limited; routing-side
+  levers improve route QUALITY but cannot break the unconnected floor. hf=1.0 is the best
+  point (most nets, fewest violations). Cross-board (zuluscsi) validation before defaulting on.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
