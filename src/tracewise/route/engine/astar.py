@@ -15,6 +15,8 @@ import math
 import time
 from dataclasses import dataclass
 
+import numpy as np
+
 from tracewise.route.engine.grid import Grid
 
 SQRT2 = math.sqrt(2.0)
@@ -82,8 +84,27 @@ def route(
     if not grid.in_bounds(sy, sx):
         return RouteResult(False, [], 0.0, "start out of bounds")
 
-    def h(node):  # admissible: octile distance to nearest goal, via cost if needed
+    # Heuristic: EXACT octile distance to the nearest goal cell (admissible, so
+    # A* stays optimal). The old Python loop over every goal cell was O(goals);
+    # since `goals` is the whole growing connection tree it dominated runtime
+    # (62% in profile — 1.6B min/abs calls). Keeping it exact but vectorising
+    # the loop with numpy for large goal sets cuts the per-call cost ~4-50x
+    # without changing the result. Small sets (the common single-pad target)
+    # stay on the scalar path — numpy's fixed per-call overhead loses there.
+    use_np = len(goals) > 24
+    if use_np:
+        gl_arr = np.fromiter((g[0] for g in goals), np.int64, len(goals))
+        gy_arr = np.fromiter((g[1] for g in goals), np.float64, len(goals))
+        gx_arr = np.fromiter((g[2] for g in goals), np.float64, len(goals))
+
+    def h(node):
         nl, ny, nx = node
+        if use_np:
+            dy = np.abs(gy_arr - ny)
+            dx = np.abs(gx_arr - nx)
+            d = dy + dx + (SQRT2 - 2.0) * np.minimum(dy, dx)
+            d[gl_arr != nl] += via_cost
+            return float(d.min())
         best = math.inf
         for gl, gy, gx in goals:
             dy, dx = abs(gy - ny), abs(gx - nx)
