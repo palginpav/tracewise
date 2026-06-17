@@ -250,6 +250,35 @@ in 3 iters. The principled path below 46, reusing the A* almost verbatim.
   use layer changes to reach legal corridors). Improves on BOTH boards, regresses neither →
   history_factor DEFAULT FLIPPED TO 1.0 in route_board_engine (flows to the auto loop). The
   unconnected floor still ultimately placement-bound; this is the routing-side ceiling raised.
+
+## Placement refinement re-baselined on the new router — BLOCKED BY ROUTE NONDETERMINISM (2026-06-17)
+
+Re-ran the auto loop on zuluscsi with history_factor=1.0 (new router). Goal: does the
+T3-verified placement arm (nudges/rotations/storm-flips, keep-best) break the unconnected floor?
+- 3 iters, default flip gate (stall>=2): moved=0 EVERY iter, held unc=70/err=82. The nudge arm
+  is inert (no candidate improved T3), and the flip arm never fired (stall>=2 unreached in 3 iters).
+- Made the flip trigger configurable (flip_stall_gate, default 2 = unchanged) and re-ran with
+  gate=0 (flips from it1) x5 iters: STILL moved=0 every iter. Flips were generated + T3-verified
+  but NONE reduced the stubborn-set (fail,cost) — the old validated R125 flip does not help the
+  new baseline. best 64/85 (vs it0 64/86) — no placement change, pure timing wobble.
+- THE DECISIVE OBSERVATION: it0 and it2 routed the SAME base placement (moved=0 throughout, so
+  base_bytes never changed), SAME priority ({}), SAME ripup (8) — yet gave unc 64 then 70.
+  Identical inputs, different output => zuluscsi routes are NONDETERMINISTIC. Cause: the 600s
+  route_all wall-clock cap truncates routes mid-search on the 1.8M-node grid, so CPU-timing
+  jitter changes which nets complete (±6 unconnected run-to-run). This is the router-throughput
+  bound (already diagnosed) now shown to also POISON placement measurement: a flip's effect
+  (~±2 unc) is below the timing noise (~±6), so keep-best cannot tell a good flip from a lucky
+  route, and the T3 verdict doesn't translate to the truncated full route.
+- CONSEQUENCE: placement refinement on zuluscsi cannot be cleanly measured OR improved until the
+  router COMPLETES within budget (deterministic). mitayi DOES complete (428k grid, 290s<600s,
+  deterministic) so its 63 is a TRUE placement floor — but mitayi's back is poured
+  (back_free~0 => flips suppressed) and its nudge arm is historically inert. Both benchmark
+  boards are now blocked: zuluscsi by router-throughput noise, mitayi by poured-back + inert nudges.
+- VERDICT: the placement-refinement arsenal (nudges+flips) is exhausted against these two boards
+  with the current router. The dominant gate is a FASTER/DETERMINISTIC router (coarsen-then-refine
+  0.2->0.1mm, numpy-vectorized wavefront like eccf.build_field, or Rust) — it unblocks BOTH
+  routing quality AND clean placement measurement. Secondary: a new placement capability for
+  poured-back boards (rotation-in-loop, parked). flip_stall_gate kept as a tuning enabler.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
