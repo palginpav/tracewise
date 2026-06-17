@@ -1,22 +1,26 @@
 """PathFinder negotiated-congestion router (docs/FORMULATION.md §5.3).
 
-The existing rip-up router treats grid occupancy as a HARD wall: a cell used by
-net A is forbidden to net B, so when a net cannot find a free path it fails or
-shaves clearance — "negotiated congestion minus the negotiation". Every measured
-wall (more-time -> more-violations, forced clearance-shaving, no dominant lever)
-is the signature of forbidding contention instead of pricing it.
+The rip-up router treats grid occupancy as a HARD wall: a cell used by net A is
+forbidden to net B, so when a net cannot find a free path it fails or shaves
+clearance — "negotiated congestion minus the negotiation". Every measured wall
+(more-time -> more-violations, forced clearance-shaving, no dominant lever) is
+the signature of forbidding contention instead of pricing it.
 
-PathFinder prices it. Hard obstacles (pads, keepouts, their clearance halos)
-stay forbidden — capacity 0. Routed-track cells are negotiable, capacity 1:
-two nets MAY share a cell, but at a cost that rises with present congestion and
-with history (how often the cell has been over-used across iterations). Route
-all nets allowing overuse, then iterate: rip up and re-route over-used nets at
-ever-higher congestion price until no cell is shared (a legal, short-free
-routing) or the budget is spent. Nets with alternatives vacate contested cells
-and leave them to nets that have none — the negotiation the greedy router lacks.
+PathFinder prices it. Two planes:
 
-A single iteration reuses the same A* as the rip-up router; only the cell-entry
-cost changes from {0 if free else infinity} to base*(1+h*hist)*(1+p*present).
+  * `hard` — inflated pads + keepouts (and their clearance). Capacity 0: never
+    enterable (except a net's own pads, carved while it routes). This keeps the
+    router clear of fixed copper.
+  * `occ` — track-halo congestion: when a net commits, its centerline is
+    inflated by (halfwidth + clearance) and added here. Capacity 1, so two nets
+    whose copper would come within clearance share an `occ` cell. Entering an
+    `occ` cell is allowed but PRICED by present congestion and history (how
+    often the cell has been over-used across iterations).
+
+Route everyone allowing overuse, then iterate: rip up and reroute over-used nets
+at an ever-higher congestion price until no cell is shared — a legal, clearance-
+respecting, short-free routing — or the budget is spent. Nets with alternatives
+vacate contested cells and leave them to nets that have none.
 """
 
 from __future__ import annotations
@@ -36,71 +40,66 @@ DIRS = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
 
 
 @dataclass
-class PFState:
-    """Mutable congestion state shared across the negotiation iterations."""
-    grid: Grid
-    occ: np.ndarray  # [L,ny,nx] int: routed-track nets occupying each cell
-    hist: np.ndarray  # [L,ny,nx] float: accumulated historical congestion cost
-    net_cells: dict = field(default_factory=dict)  # name -> set[(l,iy,ix)]
-
-    @classmethod
-    def make(cls, grid: Grid) -> PFState:
-        shape = grid.cells.shape
-        return cls(grid=grid, occ=np.zeros(shape, np.int32),
-                   hist=np.zeros(shape, np.float64))
-
-    def add(self, name: str, cells: set) -> None:
-        self.net_cells[name] = cells
-        for layer, iy, ix in cells:
-            self.occ[layer, iy, ix] += 1
-
-    def remove(self, name: str) -> None:
-        for layer, iy, ix in self.net_cells.pop(name, ()):  # noqa: B007
-            self.occ[layer, iy, ix] -= 1
+class _Net:
+    name: str
+    cells: set = field(default_factory=set)  # committed centerline path cells
+    vias: set = field(default_factory=set)   # (iy,ix) via sites
+    halo: set = field(default_factory=set)   # occ-inflated cells (for rip-up)
+    paths: list = field(default_factory=list)
 
 
-def _pf_route(state: PFState, net: Net, h_fac: float, p_fac: float,
-              via_cost: float, max_expansions: int) -> tuple[list, set] | None:
-    """A* for one net's connection tree on the SOFT cost surface. Hard cells
-    (pads/keepouts, occ via grid.hard) are forbidden except the net's own pads
-    (the A* goals). Returns (paths, cells) or None if a pad can't be reached."""
-    grid = state.grid
-    occ, hist = state.occ, state.hist
+def _halo_cells(grid: Grid, cells: set, vias: set, hw: int, vhw: int) -> set:
+    """Inflate centerline cells (by hw) and via sites (by vhw, all layers) to
+    the clearance footprint used for congestion."""
+    out = set()
     L, H, W = grid.cells.shape
-
-    def cell_cost(layer, iy, ix, move):
-        # present congestion = nets already on this cell (this net is removed
-        # from occ before routing); capacity 1, so each extra net adds 1.
-        present = occ[layer, iy, ix]
-        return move * (1.0 + h_fac * hist[layer, iy, ix]) * (1.0 + p_fac * present)
-
-    all_paths: list = []
-    tree: set = {net.pads[0]}
-    for pad in net.pads[1:]:
-        if pad in tree:
-            continue
-        goals = tree
-        res = _astar_soft(grid, pad, goals, cell_cost, via_cost,
-                          state.net_cells.get(net.name), max_expansions)
-        if res is None:
-            return None  # unroutable even through congestion -> a real failure
-        all_paths.append(res)
-        tree.update(res)
-    cells = set().union(*all_paths) if all_paths else set()
-    cells -= set(net.pads)  # pads are their own hard obstacles, not track cells
-    return all_paths, cells
+    for layer, iy, ix in cells:
+        for dy in range(-hw, hw + 1):
+            yy = iy + dy
+            if 0 <= yy < H:
+                for dx in range(-hw, hw + 1):
+                    xx = ix + dx
+                    if 0 <= xx < W:
+                        out.add((layer, yy, xx))
+    for iy, ix in vias:
+        for dy in range(-vhw, vhw + 1):
+            yy = iy + dy
+            if 0 <= yy < H:
+                for dx in range(-vhw, vhw + 1):
+                    xx = ix + dx
+                    if 0 <= xx < W:
+                        for layer in range(L):
+                            out.add((layer, yy, xx))
+    return out
 
 
-def _astar_soft(grid: Grid, start, goals: set, cell_cost, via_cost: float,
-                own_cells, max_expansions: int):
-    """Soft-cost A* from start to nearest goal. Enters any cell whose grid.hard
-    count is 0 (or which this net already owns, or which is a goal); priced by
-    cell_cost. Octile heuristic (admissible: min cell cost is the base move)."""
-    hard = grid.hard
-    L, H, W = grid.cells.shape
-    own = own_cells or set()
+def _dilate(a: np.ndarray, r: int) -> np.ndarray:
+    """Diamond max-dilation by r cells (per layer). Pricing a candidate
+    centerline by dilated congestion makes the cost HALO-aware: a track whose
+    inflated footprint would overlap another net's copper is priced even though
+    its centerline cell looks free (the bug that let two nets pile into one gap,
+    each on a 'free' centerline while their halos collided)."""
+    if r <= 0:
+        return a
+    d = a
+    for _ in range(r):
+        nd = d.copy()
+        nd[:, 1:, :] = np.maximum(nd[:, 1:, :], d[:, :-1, :])
+        nd[:, :-1, :] = np.maximum(nd[:, :-1, :], d[:, 1:, :])
+        nd[:, :, 1:] = np.maximum(nd[:, :, 1:], d[:, :, :-1])
+        nd[:, :, :-1] = np.maximum(nd[:, :, :-1], d[:, :, 1:])
+        d = nd
+    return d
 
-    def h(node):
+
+def _astar(hard, occ, hist, start, goals: set, via_cost, h_fac, p_fac,
+           max_expansions: int):
+    """Soft-cost A* to the nearest goal. `hard` (bool) cells are forbidden
+    unless they are a goal; every other cell is enterable, priced by
+    move*(1+h*hist)*(1+p*occ). Octile heuristic (admissible: min step = move)."""
+    L, H, W = hard.shape
+
+    def heur(node):
         nl, ny, nx = node
         best = math.inf
         for gl, gy, gx in goals:
@@ -111,7 +110,7 @@ def _astar_soft(grid: Grid, start, goals: set, cell_cost, via_cost: float,
             best = min(best, d)
         return best
 
-    open_q = [(h(start), 0.0, start)]
+    open_q = [(heur(start), 0.0, start)]
     came = {start: None}
     g = {start: 0.0}
     exp = 0
@@ -130,82 +129,122 @@ def _astar_soft(grid: Grid, start, goals: set, cell_cost, via_cost: float,
         if exp > max_expansions:
             return None
         nl, ny, nx = node
+        nbrs = []
         for dy, dx, mv in DIRS:
             iy, ix = ny + dy, nx + dx
-            if not (0 <= iy < H and 0 <= ix < W):
+            if 0 <= iy < H and 0 <= ix < W:
+                nbrs.append(((nl, iy, ix), mv))
+        for layer in range(L):
+            if layer != nl:
+                nbrs.append(((layer, ny, nx), via_cost))
+        for nxt, mv in nbrs:
+            nl2, iy, ix = nxt
+            is_goal = nxt in goals
+            if not is_goal and hard[nl2, iy, ix]:
                 continue
-            nxt = (nl, iy, ix)
-            if nxt not in goals and hard[nl, iy, ix] > 0 and nxt not in own:
-                continue  # hard obstacle (pad/keepout) — never negotiable
-            step = mv if nxt in goals else cell_cost(nl, iy, ix, mv)
+            step = mv if is_goal else mv * (1.0 + h_fac * hist[nl2, iy, ix]) * (
+                1.0 + p_fac * occ[nl2, iy, ix])
             ng = gc + step
             if ng < g.get(nxt, math.inf):
                 g[nxt] = ng
                 came[nxt] = node
-                heapq.heappush(open_q, (ng + h(nxt), ng, nxt))
-        for layer in range(L):  # via
-            if layer == nl:
-                continue
-            nxt = (layer, ny, nx)
-            if nxt not in goals and hard[layer, ny, nx] > 0 and nxt not in own:
-                continue
-            step = via_cost if nxt in goals else cell_cost(layer, ny, nx, via_cost)
-            ng = gc + step
-            if ng < g.get(nxt, math.inf):
-                g[nxt] = ng
-                came[nxt] = node
-                heapq.heappush(open_q, (ng + h(nxt), ng, nxt))
+                heapq.heappush(open_q, (ng + heur(nxt), ng, nxt))
     return None
+
+
+def _route_one(hard, occ, hist, net: Net, via_cost, h_fac, p_fac, max_exp):
+    """Route a net's connection tree on the soft surface. Own pads are carved
+    from `hard` by the caller. Returns (_Net) or None on a real no-path."""
+    out = _Net(net.name)
+    tree = {net.pads[0]}
+    for pad in net.pads[1:]:
+        if pad in tree:
+            continue
+        path = _astar(hard, occ, hist, pad, tree, via_cost, h_fac, p_fac, max_exp)
+        if path is None:
+            return None
+        out.paths.append(path)
+        for a, b in zip(path, path[1:], strict=False):
+            if a[0] != b[0]:
+                out.vias.add((a[1], a[2]))
+        tree.update(path)
+    out.cells = (tree - set(net.pads))
+    return out
 
 
 def route_all_pathfinder(
     grid: Grid, nets: list[Net], via_cost: float = 10.0, priority=None,
-    iters: int = 20, h_fac: float = 0.4, p_growth: float = 1.8,
+    iters: int = 24, h_fac: float = 0.5, p_growth: float = 1.8,
     max_expansions: int | None = None,
 ) -> dict[str, NetRoute]:
-    """Negotiated-congestion routing. Returns name -> NetRoute. A net is `ok`
-    iff its connection tree is built AND none of its cells is over-used (shared)
-    at convergence — so an ok route is short-free by construction."""
+    """Negotiated-congestion routing. A net is `ok` iff its tree is built AND
+    none of its halo cells is over-used at convergence — an ok route is
+    clearance-respecting and short-free by construction."""
     if max_expansions is None:
         max_expansions = 2 * grid.layers * grid.ny * grid.nx
-    state = PFState.make(grid)
-    ordered = order_nets(nets, priority)
-    routed_nets = [n for n in ordered if len(n.pads) >= 2]
-    results: dict[str, NetRoute] = {}
-    paths_of: dict[str, list] = {}
-    p_fac = 0.5
+    L, H, W = grid.cells.shape
+    base_hard = grid.cells > 0  # inflated pads + keepouts -> forbidden
+    occ = np.zeros((L, H, W), np.int32)
+    hist = np.zeros((L, H, W), np.float64)
 
-    # iteration 0: route everyone once (cheap congestion), then negotiate
-    for _it in range(iters):
-        over = state.occ > 1  # any cell used by >1 net
-        to_route = [n for n in routed_nets
-                    if n.name not in state.net_cells
-                    or any(over[c] for c in state.net_cells[n.name])]
+    ordered = order_nets(nets, priority)
+    routed = [n for n in ordered if len(n.pads) >= 2]
+    by_name = {n.name: n for n in routed}
+    state: dict[str, _Net] = {}
+
+    def carve(net: Net, on: bool):
+        # un-/re-forbid the net's own pad footprints so it can leave its pads
+        for layer, x1, y1, x2, y2, inf in getattr(net, "carve", ()):
+            cy1, cx1 = grid.to_cell(min(x1, x2) - inf, min(y1, y2) - inf)
+            cy2, cx2 = grid.to_cell(max(x1, x2) + inf, max(y1, y2) + inf)
+            sl = (slice(max(0, cy1), min(H, cy2 + 1)), slice(max(0, cx1), min(W, cx2 + 1)))
+            base_hard[layer][sl] = False if on else (grid.cells[layer][sl] > 0)
+
+    def commit(net: Net, r: _Net, delta: int):
+        for c in r.halo:
+            occ[c] += delta
+
+    p_fac = 0.5
+    for _ in range(iters):
+        over = occ > 1
+        to_route = [n for n in routed
+                    if n.name not in state
+                    or any(over[c] for c in state[n.name].halo)]
         if not to_route:
-            break  # legal: no over-used cell
-        for n in to_route:
-            state.remove(n.name)
-            res = _pf_route(state, n, h_fac, p_fac, via_cost, max_expansions)
-            if res is None:
-                paths_of[n.name] = []
-                state.add(n.name, set())  # routed as empty (failed) — no cells
+            break
+        for net in to_route:
+            if net.name in state:
+                commit(net, state[net.name], -1)
+                del state[net.name]
+            carve(net, True)
+            # price by HALO-dilated congestion + history so a centerline whose
+            # footprint would overlap another net's copper is penalised (not
+            # just exact centerline overlaps)
+            hw = net.halfwidth_cells
+            occ_cost = _dilate(occ, hw)
+            hist_cost = _dilate(hist, hw)
+            r = _route_one(base_hard, occ_cost, hist_cost, net, via_cost, h_fac,
+                           p_fac, max_expansions)
+            carve(net, False)
+            if r is None:
+                state[net.name] = _Net(net.name)  # failed: no cells
                 continue
-            all_paths, cells = res
-            paths_of[n.name] = all_paths
-            state.add(n.name, cells)
-        # history: charge cells still over-used after this sweep; ramp the price
-        state.hist += np.maximum(0.0, state.occ.astype(np.float64) - 1.0)
+            r.halo = _halo_cells(grid, r.cells, r.vias, net.halfwidth_cells,
+                                 net.via_halfwidth_cells)
+            commit(net, r, 1)
+            state[net.name] = r
+        hist += np.maximum(0.0, occ.astype(np.float64) - 1.0)
         p_fac *= p_growth
 
-    over = state.occ > 1
-    for n in routed_nets:
-        cells = state.net_cells.get(n.name, set())
-        paths = paths_of.get(n.name, [])
-        shared = any(over[c] for c in cells)
-        ok = bool(paths) and not shared
-        nr = NetRoute(net=n, paths=paths, cells=cells, ok=ok,
-                      reason="" if ok else ("congested" if shared else "no path"))
-        results[n.name] = nr
-    for n in nets:  # single-pad / trivial nets
-        results.setdefault(n.name, NetRoute(net=n, ok=True))
+    over = occ > 1
+    results: dict[str, NetRoute] = {}
+    for name, r in state.items():
+        net = by_name[name]
+        shared = any(over[c] for c in r.halo)
+        ok = bool(r.paths) and not shared
+        results[name] = NetRoute(net=net, paths=r.paths, cells=r.cells,
+                                 via_sites=r.vias, ok=ok,
+                                 reason="" if ok else ("congested" if shared else "no path"))
+    for n in nets:
+        results.setdefault(n.name, NetRoute(net=n, ok=len(n.pads) < 2))
     return results

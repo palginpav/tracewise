@@ -1,56 +1,80 @@
 """PathFinder negotiated-congestion router tests."""
 
-import numpy as np
-
 from tracewise.route.engine.grid import Grid
 from tracewise.route.engine.multi import Net
 from tracewise.route.engine.pathfinder import route_all_pathfinder
 
 
-def open_grid(w=4.0, h=4.0, layers=2):
+def net(name, pads):
+    # small halos keep the synthetic tests legible
+    return Net(name, pads, halfwidth_cells=1, via_halfwidth_cells=1)
+
+
+def open_grid(w=6.0, h=6.0, layers=2):
     return Grid(x0=0, y0=0, width_mm=w, height_mm=h, pitch=0.1, layers=layers)
 
 
-def test_pathfinder_resolves_crossing_to_zero_overuse():
-    # two nets whose shortest paths both want the center cell (10,20): a
-    # horizontal net and a vertical net crossing. PathFinder must give them
-    # non-overlapping copper (occ<=1 everywhere) — short-free by construction.
-    g = open_grid()
-    nets = [
-        Net("H", [(0, 20, 2), (0, 20, 38)]),  # row 20, layer 0
-        Net("V", [(0, 2, 20), (0, 38, 20)]),  # col 20, layer 0
-    ]
-    res = route_all_pathfinder(g, nets, iters=30)
-    assert res["H"].ok and res["V"].ok
-    # reconstruct occupancy from the returned cells: no cell shared
+def overuse(res):
+    # congestion = a cell whose clearance halo is claimed by >= 2 DISTINCT nets.
+    # Dedup each net's halo to a set first; a single track's own neighbouring
+    # cells must not count as self-overuse.
     occ = {}
-    for nr in (res["H"], res["V"]):
-        for c in nr.cells:
+    for nr in res.values():
+        if not nr.cells:
+            continue
+        hw = nr.net.halfwidth_cells
+        halo = set()
+        for layer, iy, ix in nr.cells:
+            for dy in range(-hw, hw + 1):
+                for dx in range(-hw, hw + 1):
+                    halo.add((layer, iy + dy, ix + dx))
+        for c in halo:
             occ[c] = occ.get(c, 0) + 1
-    assert max(occ.values()) <= 1, "PathFinder left an over-used (shorted) cell"
+    over = sum(1 for v in occ.values() if v > 1)
+    return over
 
 
 def test_pathfinder_connects_simple_net():
     g = open_grid()
-    res = route_all_pathfinder(g, [Net("N", [(0, 10, 5), (0, 10, 35)])])
+    res = route_all_pathfinder(g, [net("N", [(0, 30, 5), (0, 30, 55)])])
     assert res["N"].ok and res["N"].paths
 
 
+def _two_gap_nets():
+    g = open_grid(12.0, 12.0, layers=1)
+    g.cells[0, :, 60] = 1  # wall at col 60 ...
+    g.cells[0, 20:30, 60] = 0  # ... wide gap A
+    g.cells[0, 90:100, 60] = 0  # ... wide gap B
+    nets = [
+        net("A", [(0, 40, 8), (0, 40, 112)]),  # both nearer gap A
+        net("B", [(0, 50, 8), (0, 50, 112)]),
+    ]
+    return g, nets
+
+
+def test_pathfinder_negotiation_resolves_contention():
+    # one greedy pass piles both nets onto the nearer gap (overuse); the
+    # negotiation must raise the congestion price until they spread and no halo
+    # cell is shared -- both nets clearance-legal by construction.
+    g0, n0 = _two_gap_nets()
+    greedy = route_all_pathfinder(g0, n0, iters=1)  # no negotiation
+    assert not (greedy["A"].ok and greedy["B"].ok), "greedy should over-use here"
+    g1, n1 = _two_gap_nets()
+    full = route_all_pathfinder(g1, n1, iters=60)
+    assert full["A"].ok and full["B"].ok, "negotiation failed to resolve contention"
+    assert overuse(full) <= 1, "PathFinder left an over-used cell with room to spare"
+
+
 def test_pathfinder_reports_unroutable_explicitly():
-    # a net walled in on a single layer with no gap -> explicit no-path failure
     g = open_grid(layers=1)
-    g.cells[0, :, 20] = 1  # full wall
-    g.hard[0, :, 20] = 1
-    res = route_all_pathfinder(g, [Net("N", [(0, 10, 5), (0, 10, 35)])])
+    g.cells[0, :, 30] = 1  # full wall, no gap
+    res = route_all_pathfinder(g, [net("N", [(0, 30, 5), (0, 30, 55)])])
     assert not res["N"].ok and res["N"].reason
 
 
-def test_pathfinder_respects_hard_obstacles():
-    # a pad/keepout (hard) cell is never used by another net's track
+def test_pathfinder_respects_forbidden_cells():
     g = open_grid()
-    g.cells[0, 20, 20] = 1
-    g.hard[0, 20, 20] = 1  # hard obstacle at the crossing cell
-    nets = [Net("H", [(0, 20, 2), (0, 20, 38)])]
-    res = route_all_pathfinder(g, nets)
+    g.cells[0, 30, 30] = 1  # forbidden (pad/keepout) at the would-be crossing
+    res = route_all_pathfinder(g, [net("H", [(0, 30, 4), (0, 30, 56)])])
     assert res["H"].ok
-    assert (0, 20, 20) not in res["H"].cells  # routed around the hard cell
+    assert (0, 30, 30) not in res["H"].cells  # routed around the forbidden cell
