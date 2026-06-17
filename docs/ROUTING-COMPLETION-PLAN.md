@@ -149,3 +149,35 @@ Residual zuluscsi 65 = +3V0 37 (fragmentation tail) + GND 22 + SCSI 6 — the ha
 routing tail remains, but the pour-synthesis lever is real and shipped.
 Process: F0 (extract) + F3 (synthesize) are the durable wins from the pour line; F2/F2'
 (stub/bridge) stay falsified. Probe-before-build worked a third time.
+
+## F4 (ratsnest short-stub routing) — VALIDATED win but REVERTED on a quality gate (2026-06-17)
+
+Probe-validated: 12/24 short (<6mm) +3V0 ratsnest gaps are routable as stubs, all via the
+opposite layer. Built it (DRC-ratsnest worklist — the correct signal F2 lacked — via-enabled,
+distance-bounded, fail-safe). MEASURED connectivity win:
+  zuluscsi 65 -> 46-47 unconnected (+3V0 37->21/22), mitayi 63 -> 56.  Combined score improved
+  on both boards (zuluscsi 433->353, mitayi 393->362).
+BUT it introduced 3 net-new `shorting_items` (zuluscsi 31->34). Quality investigation:
+  - escape=0 (legality-first, no clearance shaving): shorts UNCHANGED at 34 (so not from
+    shaving) — they're grid-quantization shorts (0.1mm grid vs exact DRC) AND pour-interaction
+    (the stub changes the fill, creating a short ELSEWHERE in a dense region ~132-135mm, not on
+    the stub itself). escape=0 did reduce clearance (23->19) so it was kept while it mattered.
+  - Post-emit short-rejection (capture shorts-before, emit, DRC, revert offending stubs):
+    FAILED — the 3 shorts can't be attributed to a stub segment (they're pour-interaction, not
+    direct overlap), so reversion leaves them. "3 residual new shorts remain after reversion."
+DECISION: REVERTED. A feature that introduces unremovable SHORTS does not ship, even though the
+project's blunt combined metric (unc*5+err, lumping shorts with clearance) would accept it. A
+short is electrically catastrophic; a human engineer would not trade new shorts for connectivity.
+The connectivity approach is sound and re-openable IF stubs get EXACT-geometry (sub-grid) clearance
+validation or a pour-aware emit that doesn't fragment/bridge the fill into shorts. Deferred.
+
+## FINAL STATE OF THE ROUTING-COMPLETION ARC
+
+Shipped & default-on: router speedups (-54%, determinism), congestion pricing, F0 pour extract,
+F3 power-pour synthesis. zuluscsi unconnected 84 -> 65 (clean, zero new violations); mitayi 63 ->
+63 (no residual copper, no regression).
+Explored & closed with evidence: placement flips/nudges, F2 stub-stitch, F2' island via-bridge,
+F4 short-stub routing — each falsified or reverted by measurement, none a cheap win. The residual
+zuluscsi 65 (+3V0 37, GND 22, SCSI 6) is genuine high-fanout routing on a congested 2-layer board,
+at or near a real ceiling without exact-geometry routing or more layers. Every dead-end is
+documented so no future effort repeats them.
