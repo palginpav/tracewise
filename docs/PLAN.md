@@ -279,6 +279,33 @@ T3-verified placement arm (nudges/rotations/storm-flips, keep-best) break the un
   0.2->0.1mm, numpy-vectorized wavefront like eccf.build_field, or Rust) — it unblocks BOTH
   routing quality AND clean placement measurement. Secondary: a new placement capability for
   poured-back boards (rotation-in-loop, parked). flip_stall_gate kept as a tuning enabler.
+
+## Faster router — A* heuristic was 62% of runtime; vectorized → DETERMINISM RESTORED (2026-06-17)
+
+Profiled a mitayi route (cProfile): the octile heuristic h() was 396s of 638s (62%), driving
+1.6B min + 1.6B abs calls. Root cause: h() looped over EVERY goal cell per node expansion, and
+`goals` is the whole growing connection tree (hundreds–thousands of cells). Second tier:
+grid.free 99s, _via_ok 87s, passable 56s.
+- First attempt — O(1) bbox heuristic (octile dist to goal bounding box): FASTER per node but far
+  too LOOSE (h=0 inside the tree bbox → A* degenerates toward Dijkstra). mitayi got WORSE: routed
+  35→30, 318s. Reverted. Lesson: heuristic tightness matters more than per-node cost here.
+- Shipped — keep the EXACT octile heuristic (A* stays optimal) but VECTORIZE the goal loop with
+  numpy for large goal sets (>24); small sets keep the scalar path (numpy overhead loses there).
+  RESULTS:
+    mitayi   290s → 196s (−32%), routed 35 → 39 (routes that used to hit the 45s wall-clock cap
+             now finish in time), unconnected held at 63.
+    zuluscsi ~650s (truncated) → 521–536s (COMPLETES under the 600s cap), routed 89 → 112/116.
+  DETERMINISM RESTORED: two identical zuluscsi runs gave byte-identical results
+  (routed 112/116, unc 84, viol 562 both runs). Because routes now COMPLETE instead of
+  truncating, the output no longer depends on CPU-timing jitter. The honest deterministic
+  zuluscsi baseline is unc=84 (the earlier 64 was a lucky truncation — confirms the
+  nondeterminism diagnosis). This UNBLOCKS placement measurement: a flip's ~±2-unc effect is no
+  longer swamped by ~±6 timing noise, so keep-best can finally tell a good move from a lucky route.
+- NEXT (optional speed): after h(), the dominant costs are grid.free / _via_ok / passable
+  (neighbor expansion). Vectorizing those, or a flat-array gscore, would push zuluscsi further
+  under budget for more rip-up headroom. Determinism (the goal) is already met.
+- NEXT (placement, now unblocked): re-run the auto loop flip arm on zuluscsi with deterministic
+  routes — the experiment that was blocked is now measurable.
 - [ ] via-sweep hang is now FIXED by (3) above (bounded route). Note kept for history.
 - [ ] Global via_cost tuning negative on mitayi (cheaper vias -> early nets sprawl the back,
   starve later); targeted/per-net cheap-via for stubborn nets is the open alternative.
