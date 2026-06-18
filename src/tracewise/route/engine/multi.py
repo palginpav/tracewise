@@ -42,6 +42,8 @@ class NetRoute:
     escape_cells: set[tuple[int, int, int]] = field(default_factory=set)
     ok: bool = False
     reason: str = ""
+    # pads left unconnected when allow_partial routed the net incrementally
+    unroutable_pads: list = field(default_factory=list)
 
 
 def _mark(grid: Grid, nr: NetRoute, delta: int) -> None:
@@ -73,7 +75,8 @@ def order_nets(nets: list[Net], priority: dict[str, int] | None = None) -> list[
 
 
 def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0,
-              history=None, history_factor: float = 0.0) -> NetRoute:
+              history=None, history_factor: float = 0.0,
+              allow_partial: bool = False) -> NetRoute:
     nr = NetRoute(net=net)
     if len(net.pads) < 2:
         nr.ok = True  # nothing to connect
@@ -81,12 +84,24 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0,
     for layer, x1, y1, x2, y2, inf in net.carve:  # own pads must not wall the net in
         grid.block_pad(layer, x1, y1, x2, y2, inflate_mm=inf, delta=-1)
     tree: set[tuple[int, int, int]] = {net.pads[0]}
+    unroutable: list = []
     for pad in net.pads[1:]:
         if pad in tree:
             continue
         res: RouteResult = route(grid, pad, tree, via_cost=via_cost, escape=escape,
                                  history=history, history_factor=history_factor)
         if not res.ok:
+            if allow_partial:
+                # INCREMENTAL: keep the sub-tree already built and leave this one
+                # pad unconnected, instead of discarding every connection because
+                # of a single blocked pad. A high-fanout net (e.g. +3V0, 58 pads)
+                # where one pad is walled in must not lose its other 56 routes —
+                # the all-or-nothing rule was the dominant persistence failure
+                # (measured: 4 nets failed whole on a single 'no path' pad).
+                # The partial tree is real connected copper (>=2 pads), never a
+                # dangling stub.
+                unroutable.append(pad)
+                continue
             nr.reason = f"pad {pad}: {res.reason}"
             nr.cells.clear()
             nr.paths.clear()
@@ -104,7 +119,13 @@ def route_net(grid: Grid, net: Net, via_cost: float = 10.0, escape: int = 0,
     nr.cells = tree - set(net.pads)  # pads stay as the pad obstacles they are
     for layer, x1, y1, x2, y2, inf in net.carve:
         grid.block_pad(layer, x1, y1, x2, y2, inflate_mm=inf, delta=1)
-    nr.ok = True
+    if allow_partial and unroutable:
+        # partial success: connected what it could; report the residual pads
+        nr.ok = bool(nr.paths)
+        nr.reason = f"{len(unroutable)} pad(s) unroutable" if not nr.paths else ""
+        nr.unroutable_pads = unroutable
+    else:
+        nr.ok = True
     return nr
 
 
@@ -127,7 +148,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               ripup_factor: int = 8, escape: int = 0,
               priority: dict[str, int] | None = None,
               time_budget_s: float = 600.0,
-              history_factor: float = 0.0) -> dict[str, NetRoute]:
+              history_factor: float = 0.0,
+              allow_partial: bool = False) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
     `time_budget_s` is a hard wall-clock cap: on a dense board the rip-up loop
@@ -159,7 +181,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         budget -= 1
         attempts[net.name] = attempts.get(net.name, 0) + 1
         nr = route_net(grid, net, via_cost=via_cost, escape=escape,
-                       history=history, history_factor=history_factor)
+                       history=history, history_factor=history_factor,
+                       allow_partial=allow_partial)
         if nr.ok:
             _mark(grid, nr, 1)
             routed.append(nr)
