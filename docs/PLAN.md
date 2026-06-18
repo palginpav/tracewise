@@ -391,6 +391,32 @@ diagnostic implied:
   arm-2 trust-region nudges, and accepting the human-placement use case (TraceWise routes
   EXISTING placements — its strongest mode anyway).
 
+## SESSION SUMMARY — router speedups + pour-completion orchestration (2026-06-17 → 18)
+
+Full detail in docs/ROUTING-COMPLETION-PLAN.md. Headline arc:
+1. PathFinder negotiated-congestion router BUILT then PARKED as a router (mitayi 0/61, doesn't
+   converge on dense 2-layer) — but its PRICING was salvaged into rip-up as `history_factor`
+   (default 1.0): cross-validated win (zuluscsi combined 924->859, mitayi cleaner).
+2. Router made DETERMINISTIC + 54% faster: profiled the A* heuristic (62% of runtime — it looped
+   over every goal cell per node), vectorized it (exact, optimal) + vectorized neighbor
+   expansion. mitayi 290s->134s; zuluscsi now COMPLETES under the 600s cap -> byte-identical runs.
+   This unblocked clean measurement (placement signal was being swamped by time-truncation noise).
+3. Floor DIAGNOSED to net level: zuluscsi 84 unconnected = +3V0 56 (pour-less 58-pad power net) +
+   GND 22 (fragmented pour) + SCSI 6. NOT a placement problem (flips/nudges moved nothing).
+4. Orchestrated pour-completion (F0-F4, multi-agent). SHIPPED: F0 pcbnew pour extraction; F3
+   synthesize low-priority pours for pour-less power nets -> zuluscsi 84->65 (+3V0 56->37), ZERO
+   new violations, mitayi no regression (first clean floor break). FALSIFIED/REVERTED by the
+   measured-merge gate: F2 stub-stitch (wrong model), F2' island via-bridge (islands split by
+   crossing traces), F4 short-stub routing (real -18 connectivity win but introduced 3 unremovable
+   grid-quantization/pour-interaction SHORTS — reverted on the no-new-shorts quality gate).
+5. Process: probe-before-build + measured-merge caught every non-result before commit; subagents
+   work for crisp bounded specs, direct PM investigation for open-ended diagnosis.
+
+ENGINE BASELINES NOW: zuluscsi 65 unconnected (was 84), deterministic; mitayi 63. The residual is
+genuine high-fanout routing on a congested 2-layer grid, blocked by the 0.1mm grid-vs-exact-DRC
+quantization (causes shorts) — the NEXT FRESH LEVER: exact-geometry / gridless routing, under
+research as of 2026-06-18.
+
 ## v0.4 — Fixer
 
 - [ ] Patch generation for mechanical fixes (s-expression edits, grouped + labeled)
