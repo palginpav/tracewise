@@ -71,8 +71,12 @@ def build_problem(data: dict, lock_refs: set[str] | None = None,
         for i, dx, dy in pins:
             part_pins.setdefault(i, []).append((k, dx, dy))
 
-    # decoupling: capacitor refs (C*) sharing a non-GND net with another part's
-    # power-ish pad — attract the cap to that pad
+    # decoupling: capacitor refs (C*) sharing a non-GND (power) net with another
+    # part's pad — attract the cap to the NEAREST such pad. Pairing to the first
+    # pad (others[0]) attached a decoupling cap to an arbitrary supply pin
+    # instead of the IC power pin it actually bypasses; choosing the closest
+    # supply pad by initial position keeps the cap on the right side of the
+    # shortest power loop.
     decap = []
     for net, pins in by_net.items():
         if net.upper().rsplit("/", 1)[-1] in ("GND", "VSS", "AGND", "DGND"):
@@ -81,7 +85,10 @@ def build_problem(data: dict, lock_refs: set[str] | None = None,
         others = [p for p in pins if not refs[p[0]].startswith("C")]
         for c in caps:
             if others:
-                t = others[0]
+                cx = float(pos0[c[0]][0]) + c[1]
+                cy = float(pos0[c[0]][1]) + c[2]
+                t = min(others, key=lambda o: (float(pos0[o[0]][0]) + o[1] - cx) ** 2
+                        + (float(pos0[o[0]][1]) + o[2] - cy) ** 2)
                 decap.append((c[0], t[0], torch.tensor([t[1], t[2]], dtype=torch.float64)))
 
     return PlaceProblem(
