@@ -227,3 +227,34 @@ guess. Only 14 are a genuine 2-layer ceiling. So the product story is: connect t
 ~43 cleanly + honestly report the ~14 as "needs 4 layers". L2 (per-stub-gated F4 re-open +
 ratsnest ordering) targets the recoverable set. Success metric updated: not "65->0" but
 "recoverable->0, ceiling reported." Next: L2.
+
+## L2 (per-stub-gated stub) — REVERTED; STUB-COMPLETION LINE CLOSED (2026-06-18)
+
+L2 added a per-stub TRANSACTIONAL gate (emit one stub -> refill -> DRC -> revert that exact stub
+if any net-new violation). The violation invariant HELD (zuluscsi shorts 31->31). But unconnected
+REGRESSED 65->77. Added an unconnected-monotonicity guard (keep only if unconnected STRICTLY
+drops) and re-measured: STILL 65->75. The guard cannot work because the failure is the REFILL
+itself: every emit->refill (even for a stub that gets reverted) re-solves the whole power-pour
+fill and reshuffles it, drifting connectivity upward globally. The per-stub gate triggers this
+on every attempt, so it cannot beat the instability it causes.
+
+ROOT CAUSE (convergent across F2 / F2' / F4 / L2 — the ENTIRE stub-completion line): you cannot
+LOCALLY edit a power pour. Each refill_zones re-solves the global fill; small copper edits
+fragment it unpredictably. Post-pour stub completion is architecturally unstable. CLOSED.
+
+Consequence: the 43 "router-recoverable" residuals (paths that EXIST per L1) must be addressed
+in the MAIN router (route power nets as real traces with better ordering/congestion BEFORE/with
+the pour), NOT by post-hoc stubs. That is high-fanout routing — the hard, standing problem.
+
+DURABLE WINS from the whole pour line: F0 (extract), F3 (synthesize power pours, zuluscsi 84->65),
+L1 (ceiling detector: 43 recoverable / 14 true-ceiling / 8 unknown). Everything else falsified.
+
+## PIVOT: functional placement grouping (operator lever, research done 2026-06-18)
+
+docs/research/NEXT-functional-placement-grouping.md. The placer groups connected parts only
+IMPLICITLY (HPWL); the decoupling term is crude (cap -> FIRST pad on the shared power net). Plan
+(recommend_existing, ~2-3d): (A) fix decap->IC assignment (closest supply pad), (B) rule-based
+sub-circuit group extraction (crystal+caps, regulator+caps, ESD) via ref+value patterns, (C)
+differentiable cluster-centroid attraction term annealed in optimize(). VALIDATE by routing-in-
+the-loop on MITAYI (deterministic; zuluscsi floor is pour-class-dominated, placement-insensitive).
+This is the upstream lever on congestion — measured, not by placement score (which misleads).
