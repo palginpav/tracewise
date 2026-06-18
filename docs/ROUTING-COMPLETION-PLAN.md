@@ -181,3 +181,27 @@ F4 short-stub routing — each falsified or reverted by measurement, none a chea
 zuluscsi 65 (+3V0 37, GND 22, SCSI 6) is genuine high-fanout routing on a congested 2-layer board,
 at or near a real ceiling without exact-geometry routing or more layers. Every dead-end is
 documented so no future effort repeats them.
+
+## RESEARCH SYNTHESIS — next levers (2026-06-18, two parallel researchers, CONVERGENT)
+
+Docs: docs/research/NEXT-exact-geometry-routing.md, docs/research/NEXT-high-fanout-completion.md.
+Both researchers independently reached `recommend_existing` and the SAME #1 lever.
+
+DECISION — staged plan:
+- **L1 (ceiling detector, ~0.5d, non-destructive, do FIRST):** BFS reachability on the final grid
+  per unconnected pair with cap=infinity → classify each residual as `ROUTER_RECOVERABLE` vs
+  `UNROUTABLE_2LAYER`. Gives the HONEST denominator (est. 30-35 of 65 are a true 2-layer ceiling)
+  and is a genuine product differentiator (report "this net needs 4 layers"). Sets the real target
+  for L2. Plugs into route_board_engine as a post-route report; reuses the grid.
+- **L2 (re-open F4 with PER-STUB transactional DRC gate, ~2-3d):** for each short ratsnest gap
+  (shortest-first ordering): route stub → emit → refill → run_drc → KEEP only if no net-new short/
+  error, else revert THAT stub. Per-stub (not batch) catches pour-interaction shorts by construction
+  — the exact failure that got F4 reverted. Target: +3V0 37->~20, GND a few, zuluscsi 65->~48,
+  ZERO new shorts. Runtime guard: skip stubs not intersecting a zone outline; bisection fallback.
+- **L3 (deeper, later): exact-geometry segment emit** (Shapely Minkowski snap) to kill grid-
+  quantization shorts at the source; and **FindIsolatedCopperIslands** for GND island bridging.
+- **vNext: true gridless/shape-based router** = the long-term architecture (3-6 mo), behind the
+  same route(board,spec)->RouteResult contract. Not now.
+
+Honest reframe: success is no longer "65->0". It is "connect the ROUTER-RECOVERABLE residual
+cleanly (no shorts) and HONESTLY REPORT the 2-layer ceiling." L1 quantifies that; L2 delivers it.
