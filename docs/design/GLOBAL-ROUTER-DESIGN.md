@@ -155,3 +155,15 @@ REVISED PLAN: drop the capacity-based-coarse-negotiation build. The connectivity
 EXACT-GEOMETRY routing (Option C, gridless / shape-based). Interim: finer-pitch as an opt-in quality
 mode. The negotiated-congestion PRICING (history_factor, shipped) remains useful layered on whatever
 resolution. Next real chapter = the gridless router, now doubly justified (connectivity AND legality).
+
+## SHIPPED — `--quality` finer-pitch mode (2026-06-18, interim connectivity lever)
+
+The Phase-2 finding (finer grid -> fewer false-congestion unconnected) shipped as an opt-in mode.
+Tradeoff curve (mitayi, route+DRC):
+  pitch 0.1mm  -> unc 48  176s  combined 344
+  pitch 0.075  -> unc 28  272s  combined 259   <-- SWEET SPOT (-42% unc at 1.5x runtime)
+  pitch 0.05   -> unc 27  770s  combined 242   (3x more runtime for ~1 more net)
+0.075mm captures nearly all the benefit at 1.5x runtime; 0.05 has diminishing returns. Shipped as
+`tracewise route --engine tracewise --quality` (pitch=0.075). NOT defaulted (runtime cost; very
+slow on large boards like zuluscsi). This is the interim lever; exact-geometry (Option C) is the
+full unlock (zero quantization -> no false congestion AND no clearance errors).

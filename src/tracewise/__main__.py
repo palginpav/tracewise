@@ -72,13 +72,18 @@ def constrain(
 def route(
     board: Path = typer.Argument(..., help="Path to .kicad_pcb"),
     engine: str = typer.Option("freerouting", "--engine", help="freerouting | tracewise"),
+    quality: bool = typer.Option(
+        False, "--quality",
+        help="finer 0.075mm routing grid: more connections, ~1.5x slower "
+             "(the 0.1mm grid over-estimates congestion; measured mitayi "
+             "unconnected 48->28). tracewise engine only."),
 ) -> None:
     """Route the board (Freerouting bridge or the TraceWise engine) + DRC."""
     if engine == "tracewise":
         from tracewise.route.bridge import drc_summary, run_drc
         from tracewise.route.engine.kicad import route_board_engine
 
-        s = route_board_engine(board)
+        s = route_board_engine(board, pitch=0.075 if quality else 0.1)
         typer.echo(f"engine: {s['routed']}/{s['nets']} nets, "
                    f"{s['segments']} segments, {s['vias']} vias")
         for n, why in list(s["failures"].items())[:8]:
