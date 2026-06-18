@@ -18,6 +18,7 @@ from pathlib import Path
 
 from tracewise.route.bridge import _run_pcbnew_script
 from tracewise.route.engine.astar import simplify
+from tracewise.route.engine.exact_geom import nudge_endpoint, nudge_endpoint_in_region
 from tracewise.route.engine.grid import Grid
 from tracewise.route.engine.multi import Net, NetRoute, route_all
 from tracewise.sexpr import atom, node, parse_file, write_file
@@ -108,7 +109,7 @@ def extract_keepouts(board: str | Path) -> list[dict]:
 
 def build_problem(
     data: dict, pitch: float = 0.1, track_mm: float = 0.2, clearance_mm: float = 0.2
-) -> tuple[Grid, list[Net], dict]:
+) -> tuple[Grid, list[Net], dict, dict, dict]:
     bd = data["board"]
     grid = Grid(x0=bd["x1"], y0=bd["y1"], width_mm=bd["x2"] - bd["x1"],
                 height_mm=bd["y2"] - bd["y1"], pitch=pitch, layers=2)
@@ -119,6 +120,8 @@ def build_problem(
     by_net: dict[str, list[tuple[int, int, int]]] = {}
     carve: dict[str, list[tuple]] = {}
     anchors: dict[tuple[int, int, int], tuple[float, float]] = {}
+    obstacles: dict[int, list[tuple]] = {}          # layer -> [(net_name, Obstacle)]
+    anchor_rects: dict[tuple[int, int, int], tuple[float, float, float, float]] = {}
     for p in data["pads"]:
         layers = ([0] if p["front"] else []) + ([1] if p["back"] else [])
         rect = (p["x"] - p["hw"], p["y"] - p["hh"], p["x"] + p["hw"], p["y"] + p["hh"])
@@ -127,18 +130,26 @@ def build_problem(
                 cell = grid.clamp_cell(*grid.to_cell(p["x"], p["y"]))
                 by_net.setdefault(p["net"], []).append((layer, *cell))
                 anchors[(layer, *cell)] = (p["x"], p["y"])
+                anchor_rects[(layer, *cell)] = rect
                 carve.setdefault(p["net"], []).append((layer, *rect, inflate))
+            # All pads are obstacles (empty-net pads remain obstacles; they never
+            # match any routed net name so they are always other-net, correct).
+            obstacles.setdefault(layer, []).append((p["net"], ("rect", *rect)))
             grid.block_pad(layer, *rect, inflate_mm=inflate)
     half_cells = max(1, math.ceil((track_mm / 2 + clearance_mm) / pitch))
     nets = [Net(name, pads, halfwidth_cells=half_cells, carve=carve.get(name, []))
             for name, pads in by_net.items() if len(pads) >= 2]
-    return grid, nets, anchors
+    return grid, nets, anchors, obstacles, anchor_rects
 
 
 def emit_routes(
     board: str | Path, grid: Grid, results: dict[str, NetRoute],
     track_mm: float = 0.2, via_mm: float = 0.6, via_drill_mm: float = 0.3,
     anchors: dict | None = None, neck_mm: float | None = None,
+    obstacles: dict | None = None,       # dict[int, list[(net, Obstacle)]] | None
+    anchor_rects: dict | None = None,    # dict[cell, rect] | None
+    clearance_mm: float = 0.2,           # required clearance (mm)
+    nudge_vias: bool = False,            # when False, vias use grid.to_world (no nudge)
 ) -> dict:
     """Write routed nets into the board file via the sexpr editor."""
     root = parse_file(board)
@@ -150,6 +161,8 @@ def emit_routes(
             return decls.get(name) and node("net", decls[name])
         return node("net", atom(name, quote=True))
     layer_name = {0: "F.Cu", 1: "B.Cu"}
+    track_hw = track_mm / 2.0
+    via_hw = via_mm / 2.0
     segs = vias = 0
     for name, nr in results.items():
         if not nr.ok:
@@ -158,15 +171,91 @@ def emit_routes(
             continue
         net_vias: set[tuple[float, float]] = set()
         for path in nr.paths:
-            # terminal nodes snap to exact pad coordinates: cell centers can
-            # miss thin pad copper by up to pitch/2, which DRC reads as a
-            # dangling track end (the R4-falsified guarantee, repaired here)
-            snap = {}
-            if anchors:
-                for term in (path[0], path[-1]):
-                    if term in anchors:
-                        snap[term] = anchors[term]
             runs = simplify(path)
+            terminals: set = {path[0], path[-1]}
+
+            # ------------------------------------------------------------------
+            # Build per-unique-cell resolved world positions.
+            # When obstacles=None this reproduces the old snap/grid.to_world
+            # behaviour exactly (back-compat).
+            # ------------------------------------------------------------------
+            resolved: dict = {}   # (layer,iy,ix) -> (x,y)
+            via_pos: dict = {}    # (iy,ix) -> (x,y)
+
+            # Collect unique cells across all runs
+            seen_cells: set = set()
+            for run in runs:
+                for c in run:
+                    seen_cells.add(c)
+
+            for c in seen_cells:
+                if obstacles is None:
+                    # Back-compat: old snap logic
+                    if anchors and c in anchors:
+                        resolved[c] = anchors[c]
+                    else:
+                        resolved[c] = grid.to_world(c[1], c[2])
+                    continue
+                # Phase B: nudge to legal clearance position
+                others = [o for (m, o) in obstacles.get(c[0], []) if m != name]
+                if anchors and c in anchors and c in terminals:
+                    # Terminal endpoint: nudge within own pad rect
+                    rect = anchor_rects[c] if anchor_rects else None
+                    if rect is not None:
+                        xy, _ = nudge_endpoint_in_region(
+                            anchors[c], rect, others, clearance_mm, track_hw
+                        )
+                    else:
+                        xy = anchors[c]
+                else:
+                    # Intermediate endpoint: nudge with no anchor constraint
+                    cx = grid.to_world(c[1], c[2])
+                    xy, _ = nudge_endpoint(cx, None, others, clearance_mm, track_hw, 0.3)
+                resolved[c] = xy
+
+            # Resolve via cells (layer transitions): one position shared by both runs + via
+            for i in range(len(runs) - 1):
+                tn = runs[i][-1]
+                other = runs[i + 1][0]
+                same_cell = tn[1:] == other[1:]
+                if not same_cell:
+                    continue  # not a real via (shouldn't happen, but guard)
+                if obstacles is None or not nudge_vias:
+                    # Back-compat / gated-off: old pos logic — no nudge for vias.
+                    # nudge_vias=False (default) keeps the clean track-endpoint win
+                    # without the via copper-only nudge regression (+4 hole_clearance).
+                    if anchors:
+                        pos = anchors.get(tn) or anchors.get(other)
+                    else:
+                        pos = None
+                    v = pos if pos else grid.to_world(tn[1], tn[2])
+                else:
+                    others = (
+                        [o for (m, o) in obstacles.get(0, []) if m != name]
+                        + [o for (m, o) in obstacles.get(1, []) if m != name]
+                    )
+                    v, _ = nudge_endpoint(
+                        grid.to_world(tn[1], tn[2]), None, others, clearance_mm, via_hw, 0.3
+                    )
+                resolved[tn] = v
+                resolved[other] = v
+                via_pos[(tn[1], tn[2])] = v
+
+            # Populate via_pos for back-compat path (obstacles=None) too, so
+            # the via-emission loop below has a consistent source of truth.
+            if obstacles is None:
+                for i in range(len(runs) - 1):
+                    tn = runs[i][-1]
+                    other = runs[i + 1][0]
+                    if tn[1:] != other[1:]:
+                        continue
+                    if (tn[1], tn[2]) not in via_pos:
+                        pos = (anchors.get(tn) or anchors.get(other)) if anchors else None
+                        via_pos[(tn[1], tn[2])] = pos if pos else grid.to_world(tn[1], tn[2])
+
+            # ------------------------------------------------------------------
+            # Emit segments from resolved map
+            # ------------------------------------------------------------------
             # segments only for multi-node runs, but vias for EVERY layer
             # transition of the ORIGINAL run list: filtering single-node
             # terminal runs before via emission amputated the via-in-pad that
@@ -177,8 +266,8 @@ def emit_routes(
                     continue
                 layer = layer_name[run[0][0]]
                 for a, b in zip(run, run[1:], strict=False):
-                    xa, ya = snap.get(a) or grid.to_world(a[1], a[2])
-                    xb, yb = snap.get(b) or grid.to_world(b[1], b[2])
+                    xa, ya = resolved[a]
+                    xb, yb = resolved[b]
                     # width-necking: segments that traversed clearance halos
                     # emit at the necked width (never below project minimum) —
                     # what a human does at fine-pitch escapes
@@ -193,6 +282,10 @@ def emit_routes(
                         node("layer", atom(layer, quote=True)),
                         net_atom(name)))
                     segs += 1
+
+            # ------------------------------------------------------------------
+            # Emit vias from via_pos (dedupe + via-in-pad short-circuit)
+            # ------------------------------------------------------------------
             for i in range(len(runs) - 1):
                 tn = runs[i][-1]
                 other = runs[i + 1][0]
@@ -201,8 +294,7 @@ def emit_routes(
                 same_cell = tn[1:] == other[1:]
                 if anchors and same_cell and tn in anchors and other in anchors:
                     continue
-                pos = snap.get(tn) or snap.get(other)
-                vx, vy = pos if pos else grid.to_world(tn[1], tn[2])
+                vx, vy = via_pos[(tn[1], tn[2])]
                 if (vx, vy) in net_vias:
                     continue  # one barrel per position per net
                 net_vias.add((vx, vy))
@@ -267,7 +359,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        synth_power_pours: bool = True,
                        report_ceiling: bool = False,
                        allow_partial: bool = True,
-                       salvage_escape: int = 0) -> dict:
+                       salvage_escape: int = 0,
+                       nudge_vias: bool = False) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -297,9 +390,9 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     the board file nor the grid is modified."""
     data = extract_pads(board)
     geo = project_geometry(board)
-    grid, nets, anchors = build_problem(data, pitch=pitch,
-                                        track_mm=geo["track_mm"],
-                                        clearance_mm=geo["clearance_mm"])
+    grid, nets, anchors, obstacles, anchor_rects = build_problem(
+        data, pitch=pitch, track_mm=geo["track_mm"], clearance_mm=geo["clearance_mm"]
+    )
     # via blocking must hold the NEXT track's centerline at
     # via_r + clearance + track_halfwidth — omitting the halfwidth produced a
     # repeating 0.125mm-actual violation class (measured)
@@ -319,7 +412,10 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                             salvage_escape=salvage_escape)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
-                          anchors=anchors, neck_mm=geo["min_track_mm"])
+                          anchors=anchors, neck_mm=geo["min_track_mm"],
+                          obstacles=obstacles, anchor_rects=anchor_rects,
+                          clearance_mm=geo["clearance_mm"],
+                          nudge_vias=nudge_vias)
     refill_zones(board)
     pours_added = 0
     if synth_power_pours:

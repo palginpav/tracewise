@@ -75,11 +75,27 @@ SEARCH SUBSTRATE (grid → polygons), not the surrounding pipeline.
 
 ## Immediate next step
 
-Phase A of the NEAR build: add Shapely (or commit to the numpy distance fallback), implement the
-exact segment-clearance + Minkowski-endpoint helper with FIXTURE unit tests (a known segment near a
-known pad → exact legal endpoint), BEFORE touching emit.py. Probe first: on a routed board, confirm
-exact-geometry analysis identifies the DRC clearance violations our grid emits and that endpoint
-nudging resolves a measurable fraction (some are mid-segment / pour-interaction and won't be).
+~~Phase A of the NEAR build~~ **DONE (2026-06-18) — see "Phase-A status" below.**
+~~Next is the emit refactor (Phase B)~~ **Phase B DONE (2026-06-18): mitayi 104 → 88 errors,
+deterministic, 0 unconnected regression** (see `docs/design/PHASE-B-emit-integration.md`). Terminal
+track-endpoint → pad nudge is the shipped win (clearance 42→27, pad↔track 18→~3). Via nudge gated
+off (was net-negative on hole_clearance). The ~42 PROBE-A target was optimistic: it counted
+via-involved + track↔track cases that the pad-only obstacle model can't reach. Remaining legality
+gap (vias, track↔track, mid-segment) → hole_clearance-aware via nudge (bounded) or obstacle-set
+expansion, the latter folding into the FAR gridless build.
+
+### Phase-A status (2026-06-18) — exact-geometry primitive layer BUILT + TESTED
+- Committed the numpy distance fallback (NO Shapely — not installed). New module
+  `src/tracewise/route/engine/exact_geom.py`: `segment_point_distance`, `segment_segment_distance`,
+  `point_rect_distance`, `segment_rect_distance`, `clearance_to_obstacle`, `min_clearance`,
+  `is_legal`, and the core `nudge_endpoint(endpoint, anchor, obstacles, required_clearance,
+  track_hw, max_nudge=0.3)` (Minkowski push-out + bounded deterministic polar refinement;
+  anchor-constrained so the endpoint stays attached to its pad).
+- `tests/test_exact_geom.py`: 46 fixture tests — hand-computed distances with asymmetric coords,
+  explicit anti-(x/y)-swap test, determinism test, and the real mitayi case (endpoint 0.0998mm from
+  a pad, required 0.15mm → legal nudge found, clearance satisfaction ASSERTED on the returned point).
+  All 46 pass; full suite green; ruff clean. Obstacle model: circle (via/hole/round-pad), rect
+  (pad), segment+hw (track). Probe before this: PROBE-A above set the realistic ceiling at ~62/74.
 
 ## PROBE — #4 (Minkowski emit) is HIGH-value: legality is clearance-dominated (2026-06-18)
 
@@ -94,3 +110,34 @@ hole_to_hole are partly board-inherent / need separate handling.
 REVISED NEAR target: #4 exact-geometry emit (tracks + vias) -> clearance-class errors toward 0.
 Combined with the connectivity lever (finer pitch now, gridless later), this is the credible path
 to the human (0/0): #4 for legality (measured 71% addressable), gridless for connectivity.
+
+## PROBE-A — endpoint-nudgeability of the 74 clearance-class errors (2026-06-18)
+
+Numpy exact segment/via-to-copper distance analysis on a freshly-routed mitayi HUMAN placement
+(0.1mm grid; 48 unc / 104 err / 74 clearance-class — matches the scorecard). Probe script:
+`scripts/probe_clearance_nudgeability.py` (numpy-only, no Shapely; deterministic — reproduces
+exactly). Each clearance-class error assigned to one bucket:
+
+| bucket               | clearance | hole_clearance | TOTAL |
+|----------------------|-----------|----------------|-------|
+| endpoint-nudgeable (optimistic)   | 38 | 30 | **68** |
+| endpoint-nudgeable (conservative) | 32 | 30 | **62** |
+| mid-segment          | 3  | 0  | 3  |
+| pour-interaction     | 0  | 0  | **0** |
+| inherent/other       | 1  | 2  | 3  |
+| **TOTAL**            | 42 | 32 | **74** (sanity: sum = 74 ✓) |
+
+- **Optimistic** = violation point is a via or near a track endpoint, and the other party is discrete
+  (pad/track/via). **Conservative** = a legal position also EXISTS within a 0.3mm nudge that restores
+  the required clearance to all nearby copper (6 candidates fail: tight corridors needing reroute).
+- **0 pour-interaction** — the documented #4 pour caveat is a NON-ISSUE on this board. All 74 are
+  routed-copper collisions (track/via vs pad/track/via).
+- **REALISTIC #4 CEILING: ~62 of 74 fixable → mitayi 104 → ~42 errors** (conservative). The earlier
+  "~30" arch estimate was optimistic by ~12; 62 is the measurement-backed number.
+- Caveats: pads approximated as axis-aligned rects (no rotation); vias always optimistic; nudge
+  strong-test is a polar grid (12 angles × 6 radii). See script docstring.
+
+Verdict: #4 (Minkowski-snap endpoint+via emit) remains HIGH-value and well-targeted — proceed to
+Phase-A build (Shapely/numpy clearance helper + fixture tests, then refactor emit). Set the success
+target at mitayi err → ~42, not 0; the residual (3 mid-segment + 3 inherent + 6 tight-corridor) needs
+reroute/gridless, not endpoint nudging.

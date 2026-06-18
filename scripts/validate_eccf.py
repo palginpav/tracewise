@@ -30,7 +30,7 @@ def rot(dx: float, dy: float, k: int) -> tuple[float, float]:
 def main() -> None:
     data = extract_pads(BOARD)
     geo = project_geometry(BOARD)
-    grid, nets, anchors = build_problem(
+    grid, nets, anchors, _, _ = build_problem(
         data, track_mm=geo["track_mm"], clearance_mm=geo["clearance_mm"])
     inflate = geo["track_mm"] / 2 + geo["clearance_mm"]
 

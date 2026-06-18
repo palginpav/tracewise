@@ -44,8 +44,8 @@ def t2_score(board: str | Path, refs: set[str]) -> float:
     (measured: 14/18 zero deltas in the first V2 run)."""
     data = extract_pads(board)
     geo = project_geometry(board)
-    grid, _, _ = build_problem(data, track_mm=geo["track_mm"],
-                               clearance_mm=geo["clearance_mm"])
+    grid, _, _, _, _ = build_problem(data, track_mm=geo["track_mm"],
+                                     clearance_mm=geo["clearance_mm"])
     inflate = geo["track_mm"] / 2 + geo["clearance_mm"]
     total = 0.0
     for ref in refs:
