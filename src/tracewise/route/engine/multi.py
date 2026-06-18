@@ -149,7 +149,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               priority: dict[str, int] | None = None,
               time_budget_s: float = 600.0,
               history_factor: float = 0.0,
-              allow_partial: bool = False) -> dict[str, NetRoute]:
+              allow_partial: bool = False,
+              salvage_escape: int = 0) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
     `time_budget_s` is a hard wall-clock cap: on a dense board the rip-up loop
@@ -220,7 +221,12 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         for name, nr in list(results.items()):
             if nr.ok:
                 continue
-            pnr = route_net(grid, by_name[name], via_cost=via_cost, escape=escape,
+            # salvage routes LEGALITY-FIRST by default (salvage_escape=0): connect
+            # the pads that have a clean path, skip those that would only fit by
+            # shaving clearance — that shaving is the source of the salvage pass's
+            # added clearance/short violations.
+            pnr = route_net(grid, by_name[name], via_cost=via_cost,
+                            escape=salvage_escape,
                             history=history, history_factor=history_factor,
                             allow_partial=True)
             if pnr.ok and pnr.paths:

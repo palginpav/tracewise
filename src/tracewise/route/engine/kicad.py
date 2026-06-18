@@ -266,7 +266,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        engine: str = "ripup", history_factor: float = 1.0,
                        synth_power_pours: bool = True,
                        report_ceiling: bool = False,
-                       allow_partial: bool = True) -> dict:
+                       allow_partial: bool = True,
+                       salvage_escape: int = 0) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -314,7 +315,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
         results = route_all(grid, nets, escape=12, priority=priority,
                             ripup_factor=ripup_factor, via_cost=via_cost,
                             history_factor=history_factor,
-                            allow_partial=allow_partial)
+                            allow_partial=allow_partial,
+                            salvage_escape=salvage_escape)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"])
