@@ -289,3 +289,17 @@ Consistent with mitayi (grouping helps, errors down, no regression on EITHER boa
 is a CONFIRMED cross-validated routability lever for the from-scratch placer. Modest but real and
 robust; biggest gains expected on boards with many functional sub-circuits (mitayi/rp2040 each had
 only 4 detectable groups).
+
+## F3-v2 (+3V0 pour priority sweep) — NEGATIVE, confirms the 2-layer ceiling (2026-06-18)
+
+Probed whether giving the synthesized +3V0 pour more priority connects more +3V0 pads (pours are
+stable, unlike stubs). zuluscsi (GND pour priority=10):
+  +3V0 priority 0-9 (below GND):  total 65, +3V0 37, GND 22   (no change — GND wins contested copper)
+  +3V0 priority 11-13 (above GND): total 117, +3V0 12, GND 99 (+3V0 connects 25 more, GND COLLAPSES)
+STRICTLY ZERO-SUM: +3V0 and GND compete for the SAME copper; whoever has priority connects, the
+loser fragments. No priority connects both — two power planes do not fit on two layers. F3's
+LOW-priority +3V0 is already optimal (GND plane intact, +3V0 takes residual = 19 connected).
+This is the genuine 2-layer ceiling, and it refines L1: per-net "recoverable" (a path exists for
+ONE net) is OPTIMISTIC; the JOINT GND+power copper-contention constraint is the true limit. The
++3V0 residual genuinely needs a dedicated power plane (4 layers) — exactly what L1's ceiling
+detector reports. High-fanout power completion on 2 layers is CLOSED as a ceiling, not a bug.
