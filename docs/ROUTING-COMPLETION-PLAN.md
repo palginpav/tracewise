@@ -438,3 +438,18 @@ effective plane) BEFORE pour-connected nets (GND), or route GND traces last / sk
 connects via pour). DEEPER: mitayi is a tight near-capacity board where greedy+bounded-rip-up is
 zero-sum; matching the human (0) needs better GLOBAL routing (negotiated congestion that converges
 -- the PathFinder direction; history_factor is the partial version already on). Not a quick tune.
+
+## mitayi persistence CONCLUSION — near-capacity congestion, redistributable but not reducible (2026-06-18)
+
+Skip-GND-traces probe (GND connects via pour): +3V3 22->5 but GND 1->17, total 48->52. Combined
+with the +3V3-first probe (+3V3 22->8, total 48->43), the pattern is conclusive: GND and +3V3
+(and the signals) COMPETE for the same limited corridors. Every persistence lever
+(ordering, +3V3-first, skip-GND, ripup_factor) only REDISTRIBUTES the unconnected among nets;
+total stays ~43-52. mitayi is at the GREEDY+bounded-rip-up router's CAPACITY CEILING.
+The human routes it fully (0) with careful GLOBAL routing our greedy router cannot match by any
+local lever. NOT intrinsic (+3V3 routes alone), NOT budget (ripup no effect), NOT a single bug --
+a global-optimization gap. Closing it needs a CONVERGING global router (negotiated congestion done
+right -- the PathFinder direction that didn't converge; history_factor is the partial version
+already shipped) or human-level global optimization. That is the genuine, larger open problem,
+shared with zuluscsi's residual and the legality/error gap. Persistence thread CLOSED with a
+precise capacity characterization; no quick local lever remains.
