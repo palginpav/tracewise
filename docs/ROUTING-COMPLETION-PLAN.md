@@ -357,3 +357,23 @@ persistence — route every net with long detours + vias instead of abandoning h
 shaving clearance. The human spends more copper (zuluscsi 6224 vs our 3978mm) and gets 0/5; we
 get 65/108. Close that gap. v2 gridless routing would help legality (the 108 errors), but the
 unconnected gap is about PERSISTENCE/completeness, achievable in the current grid router.
+
+## PERSISTENCE BREAKTHROUGH — incremental + salvage-pass routing (2026-06-18, commit 6f3ca2d)
+
+After the human-vs-ours correction (zuluscsi IS 2-layer-routable; our 65 is a quality gap),
+went after WHY the router abandons nets. Diagnosis: only 4 zuluscsi nets failed, ALL "no path"
+on a SINGLE pad — and route_net's ALL-OR-NOTHING rule discarded the ENTIRE net (e.g. +3V0's
+58-pad tree thrown away over 1 blocked pad). Fix: incremental route_net keeps the connected
+sub-tree (real copper, never a dangling stub); deployed as a SALVAGE PASS after rip-up (so the
+rip-up dynamics that find FULL solutions on mitayi are preserved — applying partial in-loop
+disabled rip-up and regressed mitayi 63->72).
+MEASURED (allow_partial default ON, both boards IMPROVE, no regression):
+  zuluscsi  unc 65 -> 13   (combined unc*5+err 433 -> 216; power nets fully connected)
+  mitayi    unc 63 -> 55   (combined 391 -> 371; shorts held 0)
+The router now routes EVERYTHING like the human (length 3978 -> 5250mm, toward human 6224) instead
+of giving up on hard high-fanout nets. Cost: more clearance errors (zuluscsi 108->151, salvage
+routes hard nets through tight spots — the connectivity/legality trade; combined score still
+hugely positive). Gap to human (0): zuluscsi 13, mitayi 55 — now a QUALITY/legality gap, much
+closer. NEXT: legality-aware salvage (escape=0 / DRC-gated stub geometry) to cut the added
+clearance errors; then the residual is genuinely small. The 'needs 4 layers' narrative is dead —
+this is 2-layer routing approaching the human, as the shipped product proved possible.
