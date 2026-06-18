@@ -279,3 +279,13 @@ MEASURED (mitayi, from-scratch place + route sweep; human placement = unc 63):
   partial lever, not a full fix. Only 4 groups found on mitayi (few clusters); boards with more
   sub-circuits should benefit more. NEXT (optional): cross-validate on a 2nd board; raise group
   coverage (value-aware decap, hierarchical clustering); or accept-and-move-on.
+
+## Placement grouping CROSS-VALIDATED on rp2040 (2026-06-18)
+
+Robustness rule satisfied. rp2040-dev-board (human placement routes unc 65):
+  placer w_cluster=0.0 -> unc 87 err 177
+  placer w_cluster=0.1 -> unc 84 err 164   (-3 unc, -13 err)
+Consistent with mitayi (grouping helps, errors down, no regression on EITHER board). w_cluster=0.1
+is a CONFIRMED cross-validated routability lever for the from-scratch placer. Modest but real and
+robust; biggest gains expected on boards with many functional sub-circuits (mitayi/rp2040 each had
+only 4 detectable groups).
