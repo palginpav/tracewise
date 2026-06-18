@@ -258,3 +258,24 @@ sub-circuit group extraction (crystal+caps, regulator+caps, ESD) via ref+value p
 differentiable cluster-centroid attraction term annealed in optimize(). VALIDATE by routing-in-
 the-loop on MITAYI (deterministic; zuluscsi floor is pour-class-dominated, placement-insensitive).
 This is the upstream lever on congestion — measured, not by placement score (which misleads).
+
+## PLACEMENT GROUPING — SHIPPED & VALIDATED (2026-06-18, commits 8cd1b36 / 55ae871)
+
+The operator's lever: group logically-related parts (MCU+decoupling caps, crystal+load caps).
+Implemented all 3 steps + a routing-in-the-loop harness (scripts/place_route_measure.py — the
+only valid placement metric):
+- A: decoupling cap -> NEAREST supply pad (was arbitrary others[0]).
+- B: build_groups — a 2-pin passive joins the SINGLE multi-pin anchor it shares a SIGNAL net
+     with (pour/rail nets excluded so bulk decaps don't form one giant group).
+- C: cluster_penalty — differentiable anchor-attraction, annealed (w_cluster*t), default 0.1.
+MEASURED (mitayi, from-scratch place + route sweep; human placement = unc 63):
+  w_cluster  0.0 -> unc 110 err 208   (no clustering)
+             0.05-> unc 108 err 199
+             0.1 -> unc 103 err 193   (default; best errors, no HPWL distortion)
+             0.2 -> unc 98  err 206   (best unc; HPWL distorts 1045->1164)
+  Functional grouping MONOTONICALLY improves placer routability — the hypothesis is VALIDATED
+  by routing-in-the-loop (not by placement score, which misleads). The from-scratch placer
+  closes ~11% of the gap to human (110->98) but a gap remains (98 vs 63): grouping is a real
+  partial lever, not a full fix. Only 4 groups found on mitayi (few clusters); boards with more
+  sub-circuits should benefit more. NEXT (optional): cross-validate on a 2nd board; raise group
+  coverage (value-aware decap, hierarchical clustering); or accept-and-move-on.
