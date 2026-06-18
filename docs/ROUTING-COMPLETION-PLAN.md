@@ -303,3 +303,38 @@ This is the genuine 2-layer ceiling, and it refines L1: per-net "recoverable" (a
 ONE net) is OPTIMISTIC; the JOINT GND+power copper-contention constraint is the true limit. The
 +3V0 residual genuinely needs a dedicated power plane (4 layers) — exactly what L1's ceiling
 detector reports. High-fanout power completion on 2 layers is CLOSED as a ceiling, not a bug.
+
+## CORRECTION (2026-06-18): "needs 4 layers" was WRONG — zuluscsi IS 2-layer-routable
+
+Operator challenge: compare to the SHIPPED original, not our router's failure. The original
+ZuluSCSI-Pico-OSHW board is 2-LAYER and HUMAN-ROUTED to ZERO unconnected. So "needs 4 layers" is
+FALSE. zuluscsi is 100% routable on 2 layers — proven by the shipped product. Our 65 unconnected
+is a ROUTER-QUALITY gap, not a physical ceiling.
+
+HEAD-TO-HEAD (zuluscsi):
+                 HUMAN          OURS
+  unconnected    0              65
+  errors         5              108
+  segments       2393           2791
+  vias           243            328
+  F/B split      0 / 2393       0 / 2791   (BOTH: F.Cu = GND plane, all routing on B.Cu)
+  length (mm)    6224           3978
+
+DIAGNOSIS: same layer strategy. The human routes EVERYTHING with 56% MORE copper length (6224 vs
+3978) and many vias — long detours for the hard nets, only 5 errors. OUR router gives UP on the
+hard 65 (routes easy nets short, abandons hard ones as unconnected) AND shaves clearance (108
+errors). The gap is router PERSISTENCE + legality, not layers.
+
+CONSEQUENCES — prior conclusions corrected:
+- F3-v2 "can't have two planes" is TRUE but IRRELEVANT: the human uses ONE plane (F.Cu=GND) and
+  routes +3V0 as TRACES on B.Cu. Our F3 pour-synthesis was a workaround (got 19/56); the real
+  answer is TRACE-routing +3V0 like the human (our router does 2/58 — that's the gap).
+- L1 ceiling detector's "14 unroutable_2layer" is TOO PESSIMISTIC: it checks reachability on the
+  FINAL congested grid; the human proves those ARE routable with global reordering/detours that a
+  static check misses. L1 is a useful diagnostic but its "needs 4 layers" verdict over-fires.
+- The recoverable headroom is essentially the FULL 65 (the human routed all of it). Target: match
+  the human (0 unconnected) on 2 layers.
+
+REAL LEVER (was mis-scoped as a ceiling): high-fanout TRACE routing with persistence — route the
+hard nets with long detours + vias instead of abandoning them, without shaving clearance. The
+human spends 56% more copper to do it. This is router quality, and it is the genuine open problem.
