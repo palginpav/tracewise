@@ -107,3 +107,23 @@ human-baseline scorecard. The negotiated router is largely a NEW OUTER LOOP over
 The scorecard shows unconnected ≤ ~5 and errors ≤ human on mitayi/zuluscsi/rp2040, deterministic,
 with no board regressed. At that point TraceWise matches a human router on 2-layer boards — the
 original portfolio claim, proven against shipped designs.
+
+## Phase 0 COMPLETE — algorithm spec + prototype finding (2026-06-18)
+
+Research: docs/research/PHASE0-negotiated-congestion-algorithm.md. Canonical McMurchie-Ebeling
+cost = b(n)·(1+p_fac·p(n))·(1+h_fac·h(n)); iteration-0 free pass (p_fac=0); p_init 0.5, growth
+1.3, cap ~20; h_fac 1.0 no decay; history updated once per iteration. Pinpointed the crude
+pathfinder.py's 0/61 divergence to 3 root causes: RC1 too-aggressive schedule (0.5, ×1.8 → hard
+wall by iter 5), RC2 stale reroute-selection snapshot, RC3 failed nets never re-queued (the
+killer). Fixes applied to pathfinder.py (commit 36b661b); synthetic tests pass.
+
+PROTOTYPE (corrected PathFinder, engine="pathfinder", on mitayi): the algorithm now iterates
+CORRECTLY (no early hard-wall collapse) BUT did not finish in 40+ minutes on the 428k-cell mitayi
+grid — zuluscsi (1.8M) would be many hours. DECISIVE for the architecture:
+- The convergence fixes are right (foundation validated).
+- RUNTIME is the binding Stage-1 constraint. COARSEN-THEN-REFINE is now MANDATORY (was "consider"):
+  negotiate on a coarse ~0.2mm grid (16x fewer cells -> minutes), then refine the global routes to
+  0.1mm locally. The architect (Phase 1) must design this as the core of Stage 1, plus a
+  per-iteration expansion/time budget that preserves DETERMINISM (complete, never truncate).
+NEXT: Phase 1 architect — design the coarsen-then-refine negotiated router on the existing grid,
+with the corrected schedule, escape model, salvage fallback, and a runtime budget.
