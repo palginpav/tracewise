@@ -266,7 +266,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        engine: str = "ripup", history_factor: float = 1.0,
                        synth_power_pours: bool = True,
                        report_ceiling: bool = False,
-                       allow_partial: bool = False) -> dict:
+                       allow_partial: bool = True) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router

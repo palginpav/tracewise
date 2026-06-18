@@ -168,6 +168,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     deadline = time.monotonic() + time_budget_s
     results: dict[str, NetRoute] = {}
     routed: list[NetRoute] = []
+    by_name = {n.name: n for n in nets}
     budget = ripup_factor * max(len(nets), 1)
     history = (np.zeros((grid.layers, grid.ny, grid.nx), np.float64)
                if history_factor > 0.0 else None)
@@ -180,9 +181,12 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         net = queue.pop(0)
         budget -= 1
         attempts[net.name] = attempts.get(net.name, 0) + 1
+        # main loop stays all-or-nothing so the rip-up dynamics that find FULL
+        # solutions are preserved; partial routing is a last-resort salvage pass
+        # below (applying it in-loop disabled rip-up for partially-routed nets
+        # and cascaded — measured: mitayi 63->72).
         nr = route_net(grid, net, via_cost=via_cost, escape=escape,
-                       history=history, history_factor=history_factor,
-                       allow_partial=allow_partial)
+                       history=history, history_factor=history_factor)
         if nr.ok:
             _mark(grid, nr, 1)
             routed.append(nr)
@@ -205,4 +209,21 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               else "rip-up budget exhausted")
     for net in queue:  # budget or deadline exhausted
         results.setdefault(net.name, NetRoute(net=net, reason=reason))
+
+    if allow_partial:
+        # SALVAGE PASS: every net that rip-up could not fully route gets one
+        # incremental attempt that keeps whatever sub-tree it can build. This
+        # recovers high-fanout nets (e.g. +3V0, 58 pads) that the all-or-nothing
+        # main loop discarded over a single blocked pad — measured zuluscsi
+        # 65->9 — without disturbing the fully-routed nets (it only touches
+        # failures, and runs last so its copper blocks nothing).
+        for name, nr in list(results.items()):
+            if nr.ok:
+                continue
+            pnr = route_net(grid, by_name[name], via_cost=via_cost, escape=escape,
+                            history=history, history_factor=history_factor,
+                            allow_partial=True)
+            if pnr.ok and pnr.paths:
+                _mark(grid, pnr, 1)
+                results[name] = pnr
     return results
