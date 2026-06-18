@@ -377,3 +377,23 @@ hugely positive). Gap to human (0): zuluscsi 13, mitayi 55 — now a QUALITY/leg
 closer. NEXT: legality-aware salvage (escape=0 / DRC-gated stub geometry) to cut the added
 clearance errors; then the residual is genuinely small. The 'needs 4 layers' narrative is dead —
 this is 2-layer routing approaching the human, as the shipped product proved possible.
+
+## Legality-aware salvage — escape dead-end; legality cost is INTRINSIC to grid routing (2026-06-18)
+
+Pushed on cutting the salvage pass's added clearance errors. Swept salvage_escape {0,4,12}:
+errors ~151 on zuluscsi REGARDLESS — the added violations are GRID-QUANTIZATION (a grid-legal
+path within sub-pitch of copper), not endpoint clearance-shaving. Same root that defeated F4/L2.
+So legality-via-escape is a dead end. salvage_escape=0 chosen (legality-first; connects MORE
+overall: zuluscsi 15 + mitayi 48 = 63 total vs escape=12's 13+55=68).
+
+FINAL STATE (allow_partial + salvage_escape=0, default ON):
+  zuluscsi 65 -> 15 unconnected (human 0); mitayi 63 -> 48 (human 0); errors elevated (~151
+  zuluscsi) -- grid-quantization clearance violations.
+WHY the legality cost is INTRINSIC: the salvage connects hard nets by routing through TIGHT spots;
+any margin/revert that avoids the clearance error also avoids the tight spot = un-connects the net.
+You cannot, on a 0.1mm grid, both connect the hard nets AND keep exact clearance. The clean fix is
+EXACT-GEOMETRY (v2 gridless) routing — route with true clearance so tight paths don't violate.
+NET ASSESSMENT: the trade is positive. We swapped ~50 unconnected (hard: needs routing) for ~43
+clearance violations (easy: a human/tool nudges tracks). The board is much closer to done with
+EASIER remaining work — exactly what the combined metric (unc weighted 5x) rewards. The persistence
+breakthrough stands; legality polish is the v2 gridless router's domain.
