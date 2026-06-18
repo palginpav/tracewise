@@ -264,7 +264,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        priority: dict[str, int] | None = None,
                        ripup_factor: int = 8, via_cost: float = 10.0,
                        engine: str = "ripup", history_factor: float = 1.0,
-                       synth_power_pours: bool = True) -> dict:
+                       synth_power_pours: bool = True,
+                       report_ceiling: bool = False) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -283,7 +284,15 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     net that has no existing pour.  Pre-existing zones win contested copper
     (their priority is bumped), so GND fills first and the synthesized power
     pours take the residual.  Set to ``False`` to reproduce exact pre-F3
-    behaviour (no synthesized pours, no priority changes)."""
+    behaviour (no synthesized pours, no priority changes).
+
+    `report_ceiling` (default ``False``): when ``True``, after routing + pours,
+    classify every remaining unconnected ratsnest gap as either
+    ``ROUTER_RECOVERABLE`` (a free-space path exists on the 2-layer grid — the
+    router missed it under its time/budget) or ``UNROUTABLE_2LAYER`` (no path
+    exists — genuinely needs 4+ layers or re-layout).  The result is added to
+    the summary dict under the key ``"ceiling"``.  This is read-only: neither
+    the board file nor the grid is modified."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors = build_problem(data, pitch=pitch,
@@ -313,9 +322,14 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
         from tracewise.route.engine.pours import synthesize_power_pours
         pours_added = synthesize_power_pours(board)
     ok = sum(1 for r in results.values() if r.ok)
-    return {
+    summary: dict = {
         "nets": len(nets), "routed": ok, "failed": len(nets) - ok,
         "failures": {n: r.reason for n, r in results.items() if not r.ok},
         "power_pours_added": pours_added,
         **emitted,
     }
+    if report_ceiling:
+        from tracewise.route.engine.ceiling import classify_unrouted
+        ceiling = classify_unrouted(board, grid)
+        summary["ceiling"] = ceiling.as_dict()
+    return summary
