@@ -183,7 +183,8 @@ def _route_one(hard, fixed, occ, hist, net: Net, via_cost, h_fac, p_fac,
 
 def route_all_pathfinder(
     grid: Grid, nets: list[Net], via_cost: float = 10.0, priority=None,
-    iters: int = 24, h_fac: float = 0.5, p_growth: float = 1.8,
+    iters: int = 40, h_fac: float = 1.0, p_init: float = 0.5,
+    p_growth: float = 1.3, p_max: float = 20.0,
     fixed_pen: float = 4.0, max_expansions: int | None = None,
 ) -> dict[str, NetRoute]:
     """Negotiated-congestion routing. A net is `ok` iff its tree is built AND
@@ -226,11 +227,17 @@ def route_all_pathfinder(
         for c in r.halo:
             occ[c] += delta
 
-    p_fac = 0.5
-    for _ in range(iters):
+    # McMurchie-Ebeling schedule (Phase 0 research): iteration 0 is a FREE
+    # exploration pass (p_fac=0) so every net finds a path before costs escalate;
+    # then present-cost starts at p_init and grows by p_growth, capped at p_max.
+    # The crude version started at 0.5 and grew x1.8 -> a hard wall by iter ~5
+    # (RC1 of the 0/61 divergence).
+    p_fac = 0.0
+    for it in range(iters):
         over = occ > 1
         to_route = [n for n in routed
                     if n.name not in state
+                    or not state[n.name].paths          # RC3 fix: retry FAILED nets
                     or any(over[c] for c in state[n.name].halo)]
         if not to_route:
             break
@@ -256,7 +263,9 @@ def route_all_pathfinder(
             commit(net, r, 1)
             state[net.name] = r
         hist += np.maximum(0.0, occ.astype(np.float64) - 1.0)
-        p_fac *= p_growth
+        # advance the present-cost schedule: p_init after the free iteration 0,
+        # then geometric growth capped at p_max (avoids the hard-wall divergence)
+        p_fac = p_init if it == 0 else min(p_fac * p_growth, p_max)
 
     over = occ > 1
     results: dict[str, NetRoute] = {}
