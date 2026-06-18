@@ -418,3 +418,23 @@ HONEST STATE: a real, large improvement, measured against the gold standard (the
 with the two remaining levers cleanly separated and scoped: (1) more persistence for the residual
 unconnected, (2) exact-geometry for the legality/error gap. No more invented ceilings -- the human
 proves the target (0 on 2 layers) is reachable.
+
+## mitayi persistence DIAGNOSED — congestion/order, not intrinsic (2026-06-18)
+
+mitayi residual 48 = +3V3 22 (dominant) + +1V1 4 + scattered signals (1-2 each). Diagnosis:
+- +3V3 (32 pads) routes FULLY ALONE on the empty grid (all 32 connect). So its 22 unconnected in
+  the full board is 100% CONGESTION from other nets, NOT intrinsic difficulty.
+- ripup_factor 8/16/32 -> identical (48, +3V3 22): NOT budget-limited; the rip-up STRATEGY
+  (nearest-victim) doesn't free +3V3's corridors.
+- Priority probe: routing +3V3/+1V1 FIRST -> +3V3 22->8, total 48->43. Order matters a lot, but
+  partly ZERO-SUM (boosting +3V3 congests others; total only -5).
+- ROOT sub-insight: GND is power-prioritized so it trace-routes BEFORE +3V3 and congests it -- yet
+  GND is POUR-connected (1 unconnected), so its 171-pad trace tree is largely REDUNDANT and
+  actively harmful. mitayi has per-net zones for ~all nets (not planes), so a blanket "skip pour
+  nets" doesn't apply, but GND specifically (a real plane) should be deprioritized/skipped for
+  traces.
+CANDIDATE LEVER (needs cross-board validation): order trace-dependent power nets (+3V3/+1V1, no
+effective plane) BEFORE pour-connected nets (GND), or route GND traces last / skip them (GND
+connects via pour). DEEPER: mitayi is a tight near-capacity board where greedy+bounded-rip-up is
+zero-sum; matching the human (0) needs better GLOBAL routing (negotiated congestion that converges
+-- the PathFinder direction; history_factor is the partial version already on). Not a quick tune.
