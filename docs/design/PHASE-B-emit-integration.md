@@ -720,3 +720,33 @@ exact-geometry track-endpoint emit is the validated, shipped win. Remaining lega
 track↔track, mid-segment) needs either a hole_clearance-aware via nudge (bounded next step) or the
 obstacle-set expansion to tracks/vias — which folds into the FAR gridless router (the connectivity
 unlock). Recommendation #3 (obstacle expansion) is intentionally deferred to that chapter.
+
+---
+
+## Phase-C PROBE (2026-06-18) — hole-aware via nudge is LOW-VALUE; #4 is at its ceiling
+
+Before building the deferred hole_clearance-aware via nudge, probed it (`scripts/probe_via_nudge_holeaware.py`,
+numpy-only, reuses exact_geom) on the gated board `/tmp/probe_gated_1` (88 errors). For each of the
+56 via-involved residual violations, searched via positions within R=0.3mm (the emitter's bound) for
+a position satisfying BOTH copper clearance (~0.15) to other-net copper AND hole_clearance (~0.25)
+drill-to-hole to ALL nearby holes (the full multi-constraint test the previous via nudge lacked):
+
+| sub-type                | via-nudgeable | boxed-in | stale |
+|-------------------------|--------------:|---------:|------:|
+| clearance pad↔via       | 0  | 14 | 1 |
+| clearance track↔via     | 1  |  8 | 0 |
+| hole_clearance pad↔via  | 0  | 30 | 2 |
+| **total (of 56)**       | **1** | **52** | **3** |
+
+**Ceiling: ~1 of 56 → mitayi 88 → ~87 (one error).** 17 distinct vias are involved; 15 are fully
+boxed-in. Root cause: these vias sit in the RP2040 GPIO fan-out at ~0.8mm pitch against 0.4mm-spaced
+U3 pads — a via drill (r 0.1) needs 0.45mm center-to-center from each pad hole (r ~0.175), and there
+is simply no legal position within a bounded nudge. **These need REROUTING to different positions,
+not endpoint nudging.**
+
+**Conclusion — #4 NEAR build is COMPLETE at its measured ceiling (mitayi 104 → 88).** The clean win
+was the track-endpoint → pad nudge (clearance 42 → 27). Via-involved legality (52 errors) and the
+connectivity gap are BOTH congestion/quantization problems that endpoint nudging cannot reach — they
+require the FAR gridless shape-based router (continuous via/track positions over free-space polygons),
+which is the documented connectivity unlock. The hole-aware via nudge is hereby SUPERSEDED by that
+chapter, not deferred-pending — probe-disproven as a standalone lever.
