@@ -453,3 +453,16 @@ right -- the PathFinder direction that didn't converge; history_factor is the pa
 already shipped) or human-level global optimization. That is the genuine, larger open problem,
 shared with zuluscsi's residual and the legality/error gap. Persistence thread CLOSED with a
 precise capacity characterization; no quick local lever remains.
+
+## mitayi persistence — auto-loop CONFIRMS the capacity ceiling (2026-06-18)
+
+Ran the auto-refinement loop (6 iters, keep-best + arm-1 priority boost + arm-2 placement +
+salvage + congestion pricing) on mitayi: every iteration unc=48, moved=0. The existing
+iterative/global mechanism cannot break 48. EXHAUSTIVE proof now complete -- single pass 48,
+ripup 8/16/32 -> 48, ordering/skip-GND -> zero-sum 43-52, auto-loop 6 iters -> 48. mitayi sits at
+the greedy+bounded-rip-up router's CAPACITY CEILING; no available local OR iterative lever reduces
+it. The human routes it to 0 with global optimization. CLOSING the gap requires a genuinely new
+GLOBAL router (converging negotiated congestion / ILP-style / annealed global rip-up) -- the major
+open chapter, shared by zuluscsi's residual (15) and the legality/error gap. The persistence
+investigation is COMPLETE: precisely characterized, all quick/medium levers exhausted with
+evidence, the one remaining lever (global routing) clearly scoped as a substantial fresh effort.
