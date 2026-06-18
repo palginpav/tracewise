@@ -127,3 +127,31 @@ grid — zuluscsi (1.8M) would be many hours. DECISIVE for the architecture:
   per-iteration expansion/time budget that preserves DETERMINISM (complete, never truncate).
 NEXT: Phase 1 architect — design the coarsen-then-refine negotiated router on the existing grid,
 with the corrected schedule, escape model, salvage fallback, and a runtime budget.
+
+## PHASE 2 PROBE — DECISIVE PIVOT: the connectivity gap is grid quantization, not capacity (2026-06-18)
+
+Before building the capacity-based coarse negotiation, tested the Phase-1 deeper insight (is the
+connectivity gap real capacity or grid quantization?) by routing mitayi at a FINER grid:
+  0.1mm  -> unc 48 (176s)
+  0.05mm -> unc 27 (770s)   errors unchanged (104->107)
+A finer grid connects 21 MORE nets (48->27, -44%). DECISIVE: the 0.1mm grid OVER-ESTIMATES
+congestion; the connectivity gap is substantially a QUANTIZATION ARTIFACT, not pure capacity. The
+human packs tracks at spacing the 0.1mm grid cannot represent.
+
+CONSEQUENCES (architecture reoriented):
+1. Coarsen-then-refine (Phase 1 / design Option A) is the WRONG direction for fine-pitch boards.
+   The problem is the grid is too COARSE (false congestion), not too fine (slow). Coarsening makes
+   it worse (the 0.2mm probe was degenerate, ok=0). Option A is DEPRIORITIZED.
+2. FINER RESOLUTION improves BOTH connectivity (48->27) AND legality is unaffected -> exact geometry
+   (no quantization at all) is the UNIFYING solution for both remaining gaps (connectivity +
+   legality). Design Option C (gridless/exact-geometry router) is now the RECOMMENDED v2 direction,
+   justified by MEASUREMENT, not just reasoning.
+3. IMMEDIATE LEVER (already available): route_board_engine accepts `pitch`; routing at 0.05mm is a
+   real connectivity win NOW (mitayi 48->27) at ~4x runtime -- a quality/runtime tradeoff a user can
+   opt into, pending exact-geometry v2. Worth exposing/documenting (NOT defaulting -- the runtime
+   cost; zuluscsi at 0.05mm = 7M cells is very slow).
+
+REVISED PLAN: drop the capacity-based-coarse-negotiation build. The connectivity+legality unlock is
+EXACT-GEOMETRY routing (Option C, gridless / shape-based). Interim: finer-pitch as an opt-in quality
+mode. The negotiated-congestion PRICING (history_factor, shipped) remains useful layered on whatever
+resolution. Next real chapter = the gridless router, now doubly justified (connectivity AND legality).
