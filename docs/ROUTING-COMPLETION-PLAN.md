@@ -397,3 +397,24 @@ NET ASSESSMENT: the trade is positive. We swapped ~50 unconnected (hard: needs r
 clearance violations (easy: a human/tool nudges tracks). The board is much closer to done with
 EASIER remaining work — exactly what the combined metric (unc weighted 5x) rewards. The persistence
 breakthrough stands; legality polish is the v2 gridless router's domain.
+
+## DEFINITIVE SCORECARD (2026-06-18) — current best config vs the SHIPPED human boards
+
+Config: allow_partial + salvage_escape=0 + F3 power-pour synthesis + congestion pricing
+(history_factor=1.0), routing the HUMAN placement.
+
+  board      HUMAN unc/err   OURS unc/err   session arc (unconnected)
+  mitayi     0 / 0           48 / 104       63 -> 48
+  zuluscsi   0 / 5           15 / 150       84 -> 15   (best; -82% over session)
+  rp2040     3 / 65          33 / 152       ~84 -> 33
+
+The ground truth is the human (0/0, 0/5, 3/65) on 2 LAYERS. We close most of the connectivity
+gap (zuluscsi 84->15) but trail on BOTH axes:
+- unconnected gap (15/48/33): residual hard nets the rip-up/salvage still can't fit -- needs more
+  routing persistence (reordering, smarter rip-up) -- mitayi (48) is now the weakest.
+- error gap (104-152 vs human 0-65): grid-quantization clearance violations -- needs exact-
+  geometry (v2 gridless) routing.
+HONEST STATE: a real, large improvement, measured against the gold standard (the shipped product),
+with the two remaining levers cleanly separated and scoped: (1) more persistence for the residual
+unconnected, (2) exact-geometry for the legality/error gap. No more invented ceilings -- the human
+proves the target (0 on 2 layers) is reachable.
