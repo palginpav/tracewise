@@ -205,3 +205,25 @@ DECISION — staged plan:
 
 Honest reframe: success is no longer "65->0". It is "connect the ROUTER-RECOVERABLE residual
 cleanly (no shorts) and HONESTLY REPORT the 2-layer ceiling." L1 quantifies that; L2 delivers it.
+
+## L1 SHIPPED — 2-layer ceiling detector + HONEST DENOMINATOR (2026-06-18, commit 92bc81a)
+
+`classify_unrouted` (src/.../ceiling.py): free-space connected components (8-conn per layer +
+via-legal inter-layer edges); each residual ratsnest gap is ROUTER_RECOVERABLE (path exists) vs
+UNROUTABLE_2LAYER (no path — needs 4 layers) vs unknown (endpoint buried in copper). Read-only,
+route_board_engine `report_ceiling=True`. 18 tests. (Bugs caught in PM review before commit:
+net was read from wrong field -> empty by_net; missing `unknown` category -> counts didn't sum.
+Both fixed; full accounting now recoverable+unroutable+unknown == total.)
+
+MEASURED on zuluscsi (65 residual):
+  recoverable 43 | unroutable_2layer 14 | unknown 8
+  +3V0: 25 rec / 10 unroutable / 2 unk   (of 37)
+  GND:  16 rec /  2 unroutable / 4 unk   (of 22)
+  SCSI: 2 rec / 2 unroutable / 2 unk     (of 6)
+
+STRATEGIC REFRAME: ~43 of 65 are ROUTER-RECOVERABLE (a path physically exists; the router just
+didn't commit it under budget/ordering) — far more headroom than the research's 30-35-ceiling
+guess. Only 14 are a genuine 2-layer ceiling. So the product story is: connect the recoverable
+~43 cleanly + honestly report the ~14 as "needs 4 layers". L2 (per-stub-gated F4 re-open +
+ratsnest ordering) targets the recoverable set. Success metric updated: not "65->0" but
+"recoverable->0, ceiling reported." Next: L2.
