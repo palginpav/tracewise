@@ -15,6 +15,7 @@ its reason — partial nets are unmarked and discarded, never left as stubs.
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 
 from tracewise.route.engine.astar import RouteResult, route
@@ -147,26 +148,34 @@ def _nearest_victim(failed: Net, routed: list[NetRoute]) -> NetRoute | None:
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               ripup_factor: int = 8, escape: int = 0,
               priority: dict[str, int] | None = None,
-              time_budget_s: float = 600.0,
               history_factor: float = 0.0,
               allow_partial: bool = False,
-              salvage_escape: int = 0) -> dict[str, NetRoute]:
+              salvage_escape: int = 0,
+              **_legacy) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
-    `time_budget_s` is a hard wall-clock cap: on a dense board the rip-up loop
-    can thrash (A* hitting its expansion cap repeatedly). When the deadline is
-    hit, remaining nets are returned as explicit failures rather than hanging
-    the pipeline — a measured robustness need (a route once ran 21 min).
+    The rip-up loop is capped deterministically: the total number of net-routing
+    attempts is `ripup_factor * len(nets)` (the `budget` counter).  When the
+    budget is exhausted, remaining nets are returned as explicit failures with
+    reason "rip-up budget exhausted".  There is no wall-clock deadline — the
+    same board+placement always produces the same result regardless of machine
+    speed or load.
 
     `history_factor` > 0 turns on negotiated-congestion pricing (salvaged from
     the PathFinder experiment): each rip-up deposits congestion history on the
     victim's cells, and subsequent routes are nudged around those chronically-
     contested regions. 0 (default) reproduces the original pure rip-up."""
-    import time
-
+    if _legacy:
+        # Silently accept (and ignore) the removed `time_budget_s` keyword so
+        # callers that still pass it do not crash immediately.  Emit a warning
+        # once so operators notice they need to remove the argument.
+        warnings.warn(
+            f"route_all: unknown keyword(s) {list(_legacy)!r} — "
+            "'time_budget_s' has been removed; routing is now deterministic.",
+            DeprecationWarning, stacklevel=2,
+        )
     import numpy as np
 
-    deadline = time.monotonic() + time_budget_s
     results: dict[str, NetRoute] = {}
     routed: list[NetRoute] = []
     by_name = {n.name: n for n in nets}
@@ -177,8 +186,6 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     queue = order_nets(nets, priority)
     attempts: dict[str, int] = {}
     while queue and budget > 0:
-        if time.monotonic() > deadline:
-            break  # wall-clock cap: bail to explicit failures below
         net = queue.pop(0)
         budget -= 1
         attempts[net.name] = attempts.get(net.name, 0) + 1
@@ -206,9 +213,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                 queue.insert(0, net)  # we retry first, with the space freed
                 continue
         results[net.name] = nr  # definitive failure, recorded
-    reason = ("time budget exhausted" if time.monotonic() > deadline
-              else "rip-up budget exhausted")
-    for net in queue:  # budget or deadline exhausted
+    reason = "rip-up budget exhausted"
+    for net in queue:  # budget exhausted
         results.setdefault(net.name, NetRoute(net=net, reason=reason))
 
     if allow_partial:

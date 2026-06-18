@@ -70,12 +70,12 @@ def test_all_routed_on_open_board_many_nets():
     assert (g.cells == FREE).mean() < 1.0  # copper actually marked
 
 
-def test_route_all_time_budget_bails_to_failures():
+def test_route_all_round_budget_bails_to_failures():
     from tracewise.route.engine.multi import Net, route_all
     g = make_grid(layers=2)
     nets = [Net(f"N{i}", [(0, 5, 5), (0, 90, 90)]) for i in range(5)]
-    # zero budget: deadline already passed -> every net an explicit failure,
+    # zero ripup budget -> every net is an explicit failure immediately,
     # never hangs, reason names the cap
-    res = route_all(g, nets, time_budget_s=0.0)
+    res = route_all(g, nets, ripup_factor=0)
     assert len(res) == 5
-    assert all(not r.ok and "time budget" in r.reason for r in res.values())
+    assert all(not r.ok and "budget exhausted" in r.reason for r in res.values())

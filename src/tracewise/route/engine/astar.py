@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import heapq
 import math
-import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -44,17 +43,18 @@ def route(
     max_expansions: int | None = None,
     escape: int = 0,
     escape_penalty: float = 4.0,
-    max_seconds: float = 45.0,
     history=None,
     history_factor: float = 0.0,
 ) -> RouteResult:
     """A* from start to the nearest of `goals`. Cells in `goals` need not be
     free (pads are blocked for other nets but are this net's targets).
 
-    `max_expansions` defaults to ~2x the grid node count so it never cuts a
-    legitimate route (a fixed 600k cut zuluscsi's 1.8M-node grid: 48->68
-    unconnected); the per-route wall-clock (`max_seconds`) is the real runaway
-    guard, not the expansion ceiling.
+    `max_expansions` defaults to ~2x the grid node count so a runaway search on
+    an unreachable region is bounded deterministically.  A* with a consistent
+    heuristic naturally terminates once all reachable nodes are expanded (the
+    gscore dict prevents re-expansion of already-settled nodes), so the cap is
+    a safety bound rather than a normal-path limit — it fires only when a net
+    explores every reachable cell and still finds no path.
 
     `history` (per-cell float array, optional) prices chronically-contested
     cells: each step cost is scaled by (1 + history_factor*history[cell]). This
@@ -136,7 +136,6 @@ def route(
     gscore: dict[tuple[int, int, int], float] = {start: 0.0}
     shaved: set[tuple[int, int, int]] = set()
     expansions = 0
-    deadline = time.monotonic() + max_seconds
 
     while open_q:
         _, g, node = heapq.heappop(open_q)
@@ -154,10 +153,6 @@ def route(
         expansions += 1
         if expansions > max_expansions:
             return RouteResult(False, [], 0.0, "expansion budget exceeded")
-        # cheap per-route wall-clock (checked every 100k expansions): a single
-        # net exploring a large unreachable region must not run for minutes
-        if expansions % 100_000 == 0 and time.monotonic() > deadline:
-            return RouteResult(False, [], 0.0, "route time budget exceeded")
         nl, ny, nx = node
 
         # escape window is GEOMETRIC distance from the endpoints — measuring
