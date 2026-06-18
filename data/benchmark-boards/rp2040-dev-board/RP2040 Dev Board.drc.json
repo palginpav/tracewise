@@ -1,0 +1,3324 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-06-18T13:00:25",
+    "ignored_checks": [
+        {
+            "description": "Footprint has no courtyard defined",
+            "key": "missing_courtyard"
+        },
+        {
+            "description": "Track endpoint not centered on via",
+            "key": "track_not_centered_on_via"
+        },
+        {
+            "description": "Tuning profile track geometries",
+            "key": "tuning_profile_track_geometries"
+        },
+        {
+            "description": "Footprint doesn't match symbol's footprint filters",
+            "key": "footprint_filters_mismatch"
+        },
+        {
+            "description": "PTH inside courtyard",
+            "key": "pth_inside_courtyard"
+        },
+        {
+            "description": "NPTH inside courtyard",
+            "key": "npth_inside_courtyard"
+        }
+    ],
+    "included_severities": [
+        "error",
+        "warning"
+    ],
+    "kicad_version": "10.0.3",
+    "schematic_parity": [],
+    "source": "RP2040 Dev Board.kicad_pcb",
+    "unconnected_items": [
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH конт. пл. S4 [Net-(J201-PadS1)] у J201",
+                    "pos": {
+                        "x": 142.59,
+                        "y": 29.3
+                    },
+                    "uuid": "08dabab2-fab7-4de3-90cf-934fb59a603c"
+                },
+                {
+                    "description": "PTH конт. пл. S2 [Net-(J201-PadS1)] у J201",
+                    "pos": {
+                        "x": 142.59,
+                        "y": 33.48
+                    },
+                    "uuid": "9336101e-cfe6-44be-9531-7877d19cca03"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH конт. пл. S3 [Net-(J201-PadS1)] у J201",
+                    "pos": {
+                        "x": 151.23,
+                        "y": 29.3
+                    },
+                    "uuid": "0c048abd-2beb-4955-a1f0-301d6115c1ed"
+                },
+                {
+                    "description": "PTH конт. пл. S4 [Net-(J201-PadS1)] у J201",
+                    "pos": {
+                        "x": 142.59,
+                        "y": 29.3
+                    },
+                    "uuid": "08dabab2-fab7-4de3-90cf-934fb59a603c"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH конт. пл. S1 [Net-(J201-PadS1)] у J201",
+                    "pos": {
+                        "x": 151.23,
+                        "y": 33.48
+                    },
+                    "uuid": "0dbb17d6-19f6-4303-9d67-e41fe3854d10"
+                },
+                {
+                    "description": "PTH конт. пл. S3 [Net-(J201-PadS1)] у J201",
+                    "pos": {
+                        "x": 151.23,
+                        "y": 29.3
+                    },
+                    "uuid": "0c048abd-2beb-4955-a1f0-301d6115c1ed"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        }
+    ],
+    "violations": [
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C213",
+                    "pos": {
+                        "x": 152.06,
+                        "y": 62.3
+                    },
+                    "uuid": "148b62a6-f4ed-4898-bd38-266d64d357ed"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C215",
+                    "pos": {
+                        "x": 141.75,
+                        "y": 62.31
+                    },
+                    "uuid": "1699bd6f-25b2-4593-8c4a-6a14c5591d15"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C204",
+                    "pos": {
+                        "x": 150.38,
+                        "y": 56.15
+                    },
+                    "uuid": "1bc63903-0b09-4aaf-a846-370394033f1d"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C218",
+                    "pos": {
+                        "x": 147.11,
+                        "y": 67.01
+                    },
+                    "uuid": "22f45a69-bbae-46e1-9caf-e8a450c83b40"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C207",
+                    "pos": {
+                        "x": 149.71,
+                        "y": 42.81
+                    },
+                    "uuid": "34855130-9f90-4bbd-8d52-caa122feb87b"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C203",
+                    "pos": {
+                        "x": 144.82,
+                        "y": 68.41
+                    },
+                    "uuid": "35b93b63-d33e-4e62-a257-f4488bf896bb"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C208",
+                    "pos": {
+                        "x": 146.64,
+                        "y": 55.65
+                    },
+                    "uuid": "40388f4e-6e6d-438d-a212-c408021b40e5"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C205",
+                    "pos": {
+                        "x": 149.43,
+                        "y": 56.15
+                    },
+                    "uuid": "42f57d15-3152-4c56-b079-2cbc7d87d4c4"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C221",
+                    "pos": {
+                        "x": 150.27,
+                        "y": 67.01
+                    },
+                    "uuid": "4b69d5f7-65c1-4060-88e1-cc016f1c5b6d"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место D205",
+                    "pos": {
+                        "x": 144.06,
+                        "y": 36.42
+                    },
+                    "uuid": "59096151-c468-47ef-aeca-bf4fc9751b5c"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место U202",
+                    "pos": {
+                        "x": 146.91,
+                        "y": 61.3
+                    },
+                    "uuid": "5d537949-d3ac-447b-bab3-fa03a1967fbf"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C216",
+                    "pos": {
+                        "x": 151.62,
+                        "y": 58.0
+                    },
+                    "uuid": "67733cc4-4c14-4252-bcb6-d1039d00eaad"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место Y201",
+                    "pos": {
+                        "x": 145.32,
+                        "y": 70.52
+                    },
+                    "uuid": "76736ea1-38e6-45fb-b483-672ada9872e3"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R212",
+                    "pos": {
+                        "x": 148.71,
+                        "y": 36.42
+                    },
+                    "uuid": "805c27ab-e8c2-403d-b850-ea8fad95ce8f"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R213",
+                    "pos": {
+                        "x": 142.35,
+                        "y": 55.34
+                    },
+                    "uuid": "89912f45-fad0-4bd0-9e4c-0b6e4295c4fa"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место SW202",
+                    "pos": {
+                        "x": 144.76,
+                        "y": 40.7
+                    },
+                    "uuid": "9cc2a952-6dec-416b-b2d5-c6d4fbd3c11b"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C219",
+                    "pos": {
+                        "x": 147.59,
+                        "y": 55.65
+                    },
+                    "uuid": "9d0d4c6b-dac7-4dc6-b0d4-d59c422ca364"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R204",
+                    "pos": {
+                        "x": 148.05,
+                        "y": 53.24
+                    },
+                    "uuid": "a1db63ae-4d7d-4cf4-96bd-3fb1f5f13851"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R214",
+                    "pos": {
+                        "x": 145.005,
+                        "y": 36.42
+                    },
+                    "uuid": "a34d128a-dc02-481e-8e06-3815c2c2290e"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R102",
+                    "pos": {
+                        "x": 144.3,
+                        "y": 66.97
+                    },
+                    "uuid": "a6a4b4bc-099e-43a8-bb50-6fd3b8b82189"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R211",
+                    "pos": {
+                        "x": 141.55,
+                        "y": 40.7
+                    },
+                    "uuid": "a7667561-8617-41dd-8e3e-ae902e695a60"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C201",
+                    "pos": {
+                        "x": 151.71,
+                        "y": 42.81
+                    },
+                    "uuid": "c6114a3c-1e82-4cc3-b53b-56f23bc08300"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C212",
+                    "pos": {
+                        "x": 142.1,
+                        "y": 57.12
+                    },
+                    "uuid": "c6839ed1-7a15-422a-bfe9-dbaaf5407e12"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место D202",
+                    "pos": {
+                        "x": 147.76,
+                        "y": 36.42
+                    },
+                    "uuid": "cdae9db5-0d2f-4251-b6ff-66f345e1bc7c"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R203",
+                    "pos": {
+                        "x": 149.0,
+                        "y": 53.24
+                    },
+                    "uuid": "cec54bc4-9c88-4d50-ae7d-0f41e4488cb7"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R101",
+                    "pos": {
+                        "x": 149.995,
+                        "y": 68.855
+                    },
+                    "uuid": "cfe37617-3a83-4fc0-b4ba-8b2eade53ad9"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место R201",
+                    "pos": {
+                        "x": 146.16,
+                        "y": 67.01
+                    },
+                    "uuid": "d49aab28-5c13-42fc-a430-3da305c939d0"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C202",
+                    "pos": {
+                        "x": 148.06,
+                        "y": 67.01
+                    },
+                    "uuid": "ed8d18ee-b29e-42d1-933b-f69b3a10833c"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место C222",
+                    "pos": {
+                        "x": 141.55,
+                        "y": 43.26
+                    },
+                    "uuid": "edc41432-d202-4ec1-b0d8-375d3c539816"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место D201",
+                    "pos": {
+                        "x": 145.96,
+                        "y": 36.42
+                    },
+                    "uuid": "ee51d7a8-65cf-4d43-b1f3-d05e6bca46c5"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Тип посад. места не соответствует типам его конт. площадок (ожидался тип 'SMD'; но задано 'Выводного монтажа')",
+            "items": [
+                {
+                    "description": "Посад. место D203",
+                    "pos": {
+                        "x": 149.66,
+                        "y": 36.42
+                    },
+                    "uuid": "f2058bca-a8dc-46ab-8a20-c53f065c50dc"
+                }
+            ],
+            "severity": "error",
+            "type": "footprint_type_mismatch"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                },
+                {
+                    "description": "Посад. место C218",
+                    "pos": {
+                        "x": 147.11,
+                        "y": 67.01
+                    },
+                    "uuid": "22f45a69-bbae-46e1-9caf-e8a450c83b40"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                },
+                {
+                    "description": "Посад. место C203",
+                    "pos": {
+                        "x": 144.82,
+                        "y": 68.41
+                    },
+                    "uuid": "35b93b63-d33e-4e62-a257-f4488bf896bb"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                },
+                {
+                    "description": "Посад. место Y201",
+                    "pos": {
+                        "x": 145.32,
+                        "y": 70.52
+                    },
+                    "uuid": "76736ea1-38e6-45fb-b483-672ada9872e3"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                },
+                {
+                    "description": "Посад. место R201",
+                    "pos": {
+                        "x": 146.16,
+                        "y": 67.01
+                    },
+                    "uuid": "d49aab28-5c13-42fc-a430-3da305c939d0"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                },
+                {
+                    "description": "Посад. место C202",
+                    "pos": {
+                        "x": 148.06,
+                        "y": 67.01
+                    },
+                    "uuid": "ed8d18ee-b29e-42d1-933b-f69b3a10833c"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C204",
+                    "pos": {
+                        "x": 150.38,
+                        "y": 56.15
+                    },
+                    "uuid": "1bc63903-0b09-4aaf-a846-370394033f1d"
+                },
+                {
+                    "description": "Посад. место C205",
+                    "pos": {
+                        "x": 149.43,
+                        "y": 56.15
+                    },
+                    "uuid": "42f57d15-3152-4c56-b079-2cbc7d87d4c4"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место D104",
+                    "pos": {
+                        "x": 152.72,
+                        "y": 36.93
+                    },
+                    "uuid": "21e6dbfd-3fc4-4d7d-97f1-63763db67404"
+                },
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C218",
+                    "pos": {
+                        "x": 147.11,
+                        "y": 67.01
+                    },
+                    "uuid": "22f45a69-bbae-46e1-9caf-e8a450c83b40"
+                },
+                {
+                    "description": "Посад. место R201",
+                    "pos": {
+                        "x": 146.16,
+                        "y": 67.01
+                    },
+                    "uuid": "d49aab28-5c13-42fc-a430-3da305c939d0"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C218",
+                    "pos": {
+                        "x": 147.11,
+                        "y": 67.01
+                    },
+                    "uuid": "22f45a69-bbae-46e1-9caf-e8a450c83b40"
+                },
+                {
+                    "description": "Посад. место C202",
+                    "pos": {
+                        "x": 148.06,
+                        "y": 67.01
+                    },
+                    "uuid": "ed8d18ee-b29e-42d1-933b-f69b3a10833c"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C207",
+                    "pos": {
+                        "x": 149.71,
+                        "y": 42.81
+                    },
+                    "uuid": "34855130-9f90-4bbd-8d52-caa122feb87b"
+                },
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C207",
+                    "pos": {
+                        "x": 149.71,
+                        "y": 42.81
+                    },
+                    "uuid": "34855130-9f90-4bbd-8d52-caa122feb87b"
+                },
+                {
+                    "description": "Посад. место C209",
+                    "pos": {
+                        "x": 151.34,
+                        "y": 45.69
+                    },
+                    "uuid": "b7983e34-f4c0-408a-8703-d3e54b44e11e"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C207",
+                    "pos": {
+                        "x": 149.71,
+                        "y": 42.81
+                    },
+                    "uuid": "34855130-9f90-4bbd-8d52-caa122feb87b"
+                },
+                {
+                    "description": "Посад. место C201",
+                    "pos": {
+                        "x": 151.71,
+                        "y": 42.81
+                    },
+                    "uuid": "c6114a3c-1e82-4cc3-b53b-56f23bc08300"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C203",
+                    "pos": {
+                        "x": 144.82,
+                        "y": 68.41
+                    },
+                    "uuid": "35b93b63-d33e-4e62-a257-f4488bf896bb"
+                },
+                {
+                    "description": "Посад. место Y201",
+                    "pos": {
+                        "x": 145.32,
+                        "y": 70.52
+                    },
+                    "uuid": "76736ea1-38e6-45fb-b483-672ada9872e3"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C203",
+                    "pos": {
+                        "x": 144.82,
+                        "y": 68.41
+                    },
+                    "uuid": "35b93b63-d33e-4e62-a257-f4488bf896bb"
+                },
+                {
+                    "description": "Посад. место R102",
+                    "pos": {
+                        "x": 144.3,
+                        "y": 66.97
+                    },
+                    "uuid": "a6a4b4bc-099e-43a8-bb50-6fd3b8b82189"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C203",
+                    "pos": {
+                        "x": 144.82,
+                        "y": 68.41
+                    },
+                    "uuid": "35b93b63-d33e-4e62-a257-f4488bf896bb"
+                },
+                {
+                    "description": "Посад. место R201",
+                    "pos": {
+                        "x": 146.16,
+                        "y": 67.01
+                    },
+                    "uuid": "d49aab28-5c13-42fc-a430-3da305c939d0"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C208",
+                    "pos": {
+                        "x": 146.64,
+                        "y": 55.65
+                    },
+                    "uuid": "40388f4e-6e6d-438d-a212-c408021b40e5"
+                },
+                {
+                    "description": "Посад. место C219",
+                    "pos": {
+                        "x": 147.59,
+                        "y": 55.65
+                    },
+                    "uuid": "9d0d4c6b-dac7-4dc6-b0d4-d59c422ca364"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место D102",
+                    "pos": {
+                        "x": 151.55,
+                        "y": 70.52
+                    },
+                    "uuid": "433dff48-1202-4b4e-9420-0ab7e30a3241"
+                },
+                {
+                    "description": "Посад. место J103",
+                    "pos": {
+                        "x": 149.45,
+                        "y": 73.75
+                    },
+                    "uuid": "71af44f1-1560-4d30-929f-32237ce8c931"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                },
+                {
+                    "description": "Посад. место R212",
+                    "pos": {
+                        "x": 148.71,
+                        "y": 36.42
+                    },
+                    "uuid": "805c27ab-e8c2-403d-b850-ea8fad95ce8f"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                },
+                {
+                    "description": "Посад. место C201",
+                    "pos": {
+                        "x": 151.71,
+                        "y": 42.81
+                    },
+                    "uuid": "c6114a3c-1e82-4cc3-b53b-56f23bc08300"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                },
+                {
+                    "description": "Посад. место D202",
+                    "pos": {
+                        "x": 147.76,
+                        "y": 36.42
+                    },
+                    "uuid": "cdae9db5-0d2f-4251-b6ff-66f345e1bc7c"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                },
+                {
+                    "description": "Посад. место D203",
+                    "pos": {
+                        "x": 149.66,
+                        "y": 36.42
+                    },
+                    "uuid": "f2058bca-a8dc-46ab-8a20-c53f065c50dc"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C221",
+                    "pos": {
+                        "x": 150.27,
+                        "y": 67.01
+                    },
+                    "uuid": "4b69d5f7-65c1-4060-88e1-cc016f1c5b6d"
+                },
+                {
+                    "description": "Посад. место R101",
+                    "pos": {
+                        "x": 149.995,
+                        "y": 68.855
+                    },
+                    "uuid": "cfe37617-3a83-4fc0-b4ba-8b2eade53ad9"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C210",
+                    "pos": {
+                        "x": 151.34,
+                        "y": 50.28
+                    },
+                    "uuid": "4c292eb5-fcd5-43d5-8416-ff0b66a2b95d"
+                },
+                {
+                    "description": "Посад. место C209",
+                    "pos": {
+                        "x": 151.34,
+                        "y": 45.69
+                    },
+                    "uuid": "b7983e34-f4c0-408a-8703-d3e54b44e11e"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место D205",
+                    "pos": {
+                        "x": 144.06,
+                        "y": 36.42
+                    },
+                    "uuid": "59096151-c468-47ef-aeca-bf4fc9751b5c"
+                },
+                {
+                    "description": "Посад. место R214",
+                    "pos": {
+                        "x": 145.005,
+                        "y": 36.42
+                    },
+                    "uuid": "a34d128a-dc02-481e-8e06-3815c2c2290e"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место U202",
+                    "pos": {
+                        "x": 146.91,
+                        "y": 61.3
+                    },
+                    "uuid": "5d537949-d3ac-447b-bab3-fa03a1967fbf"
+                },
+                {
+                    "description": "Посад. место C212",
+                    "pos": {
+                        "x": 142.1,
+                        "y": 57.12
+                    },
+                    "uuid": "c6839ed1-7a15-422a-bfe9-dbaaf5407e12"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место D101",
+                    "pos": {
+                        "x": 142.32,
+                        "y": 70.52
+                    },
+                    "uuid": "6eea9f56-bcbd-4902-8b14-9e7c57d6073e"
+                },
+                {
+                    "description": "Посад. место J103",
+                    "pos": {
+                        "x": 149.45,
+                        "y": 73.75
+                    },
+                    "uuid": "71af44f1-1560-4d30-929f-32237ce8c931"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место J103",
+                    "pos": {
+                        "x": 149.45,
+                        "y": 73.75
+                    },
+                    "uuid": "71af44f1-1560-4d30-929f-32237ce8c931"
+                },
+                {
+                    "description": "Посад. место Y201",
+                    "pos": {
+                        "x": 145.32,
+                        "y": 70.52
+                    },
+                    "uuid": "76736ea1-38e6-45fb-b483-672ada9872e3"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место R212",
+                    "pos": {
+                        "x": 148.71,
+                        "y": 36.42
+                    },
+                    "uuid": "805c27ab-e8c2-403d-b850-ea8fad95ce8f"
+                },
+                {
+                    "description": "Посад. место D202",
+                    "pos": {
+                        "x": 147.76,
+                        "y": 36.42
+                    },
+                    "uuid": "cdae9db5-0d2f-4251-b6ff-66f345e1bc7c"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место R212",
+                    "pos": {
+                        "x": 148.71,
+                        "y": 36.42
+                    },
+                    "uuid": "805c27ab-e8c2-403d-b850-ea8fad95ce8f"
+                },
+                {
+                    "description": "Посад. место D203",
+                    "pos": {
+                        "x": 149.66,
+                        "y": 36.42
+                    },
+                    "uuid": "f2058bca-a8dc-46ab-8a20-c53f065c50dc"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место R213",
+                    "pos": {
+                        "x": 142.35,
+                        "y": 55.34
+                    },
+                    "uuid": "89912f45-fad0-4bd0-9e4c-0b6e4295c4fa"
+                },
+                {
+                    "description": "Посад. место C212",
+                    "pos": {
+                        "x": 142.1,
+                        "y": 57.12
+                    },
+                    "uuid": "c6839ed1-7a15-422a-bfe9-dbaaf5407e12"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место R204",
+                    "pos": {
+                        "x": 148.05,
+                        "y": 53.24
+                    },
+                    "uuid": "a1db63ae-4d7d-4cf4-96bd-3fb1f5f13851"
+                },
+                {
+                    "description": "Посад. место R203",
+                    "pos": {
+                        "x": 149.0,
+                        "y": 53.24
+                    },
+                    "uuid": "cec54bc4-9c88-4d50-ae7d-0f41e4488cb7"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место R214",
+                    "pos": {
+                        "x": 145.005,
+                        "y": 36.42
+                    },
+                    "uuid": "a34d128a-dc02-481e-8e06-3815c2c2290e"
+                },
+                {
+                    "description": "Посад. место D201",
+                    "pos": {
+                        "x": 145.96,
+                        "y": 36.42
+                    },
+                    "uuid": "ee51d7a8-65cf-4d43-b1f3-d05e6bca46c5"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Courtyards overlap",
+            "items": [
+                {
+                    "description": "Посад. место C209",
+                    "pos": {
+                        "x": 151.34,
+                        "y": 45.69
+                    },
+                    "uuid": "b7983e34-f4c0-408a-8703-d3e54b44e11e"
+                },
+                {
+                    "description": "Посад. место C201",
+                    "pos": {
+                        "x": 151.71,
+                        "y": 42.81
+                    },
+                    "uuid": "c6114a3c-1e82-4cc3-b53b-56f23bc08300"
+                }
+            ],
+            "severity": "error",
+            "type": "courtyards_overlap"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "Прямоугольник на F.Silkscreen",
+                    "pos": {
+                        "x": 155.165,
+                        "y": 45.81
+                    },
+                    "uuid": "77da69f1-4a7e-4daf-b100-27fb75871e8c"
+                },
+                {
+                    "description": "PTH конт. пл. 8 [GPIO26/ADC0] у J102",
+                    "pos": {
+                        "x": 155.8,
+                        "y": 45.81
+                    },
+                    "uuid": "7d7511b9-1563-493f-833d-36eb20e9bb83"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "Полигон от kibuzzard-6260D939 на F.Silkscreen",
+                    "pos": {
+                        "x": 152.679769,
+                        "y": 37.045942
+                    },
+                    "uuid": "087bd3f1-39d8-42a3-b628-6cb213e576a4"
+                },
+                {
+                    "description": "Конт. пл. 2 [VIN] от D104 на F.Cu",
+                    "pos": {
+                        "x": 154.37,
+                        "y": 36.93
+                    },
+                    "uuid": "cb99fcae-20c0-483f-8844-0e009667b32d"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 140.75,
+                        "y": 73.456255
+                    },
+                    "uuid": "aabc19ac-81c5-476e-aa18-1699110c5a69"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 140.75,
+                        "y": 73.456255
+                    },
+                    "uuid": "aabc19ac-81c5-476e-aa18-1699110c5a69"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32CC",
+                    "pos": {
+                        "x": 154.12,
+                        "y": 30.238161
+                    },
+                    "uuid": "71bb7057-e868-4243-9ea1-b0ffca227f4f"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32CC",
+                    "pos": {
+                        "x": 154.12,
+                        "y": 30.238161
+                    },
+                    "uuid": "71bb7057-e868-4243-9ea1-b0ffca227f4f"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 154.15,
+                        "y": 73.456255
+                    },
+                    "uuid": "d70b07f0-7794-49ac-aab9-bba7744f562e"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 154.15,
+                        "y": 73.456255
+                    },
+                    "uuid": "d70b07f0-7794-49ac-aab9-bba7744f562e"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 152.92,
+                        "y": 29.692495
+                    },
+                    "uuid": "2270bb11-02c0-4cff-8135-8e62c8bc2dbd"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 152.92,
+                        "y": 29.692495
+                    },
+                    "uuid": "2270bb11-02c0-4cff-8135-8e62c8bc2dbd"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3587",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 65.359158
+                    },
+                    "uuid": "d2ee6d7c-0b38-49ac-8f85-c1b9efb76a01"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3587",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 65.359158
+                    },
+                    "uuid": "d2ee6d7c-0b38-49ac-8f85-c1b9efb76a01"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35E6",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 55.215826
+                    },
+                    "uuid": "11919e3d-8e19-414d-a2a1-235bc2b6476b"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35E6",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 55.215826
+                    },
+                    "uuid": "11919e3d-8e19-414d-a2a1-235bc2b6476b"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 152.32,
+                        "y": 32.292495
+                    },
+                    "uuid": "c645efa1-5cf3-4d27-be7a-303fdbabecd8"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 152.32,
+                        "y": 32.292495
+                    },
+                    "uuid": "c645efa1-5cf3-4d27-be7a-303fdbabecd8"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3245",
+                    "pos": {
+                        "x": 140.42,
+                        "y": 27.260348
+                    },
+                    "uuid": "2ecceac0-0033-48d2-b634-ee7e554bd126"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3245",
+                    "pos": {
+                        "x": 140.42,
+                        "y": 27.260348
+                    },
+                    "uuid": "2ecceac0-0033-48d2-b634-ee7e554bd126"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35F5",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 50.135826
+                    },
+                    "uuid": "14977500-1b27-4a56-bed8-ecd088050d50"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35F5",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 50.135826
+                    },
+                    "uuid": "14977500-1b27-4a56-bed8-ecd088050d50"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3578",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 70.452254
+                    },
+                    "uuid": "e4dc9f1f-9589-4a47-927f-4403298fd5f9"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3578",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 70.452254
+                    },
+                    "uuid": "e4dc9f1f-9589-4a47-927f-4403298fd5f9"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35FE",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 47.580348
+                    },
+                    "uuid": "d0439ba0-756e-4389-bd49-92e797481aa5"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35FE",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 47.580348
+                    },
+                    "uuid": "d0439ba0-756e-4389-bd49-92e797481aa5"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 140.75,
+                        "y": 34.976255
+                    },
+                    "uuid": "111c2bf6-9865-4ea4-a9f9-1702355a872d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 140.75,
+                        "y": 34.976255
+                    },
+                    "uuid": "111c2bf6-9865-4ea4-a9f9-1702355a872d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34F5",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 45.030348
+                    },
+                    "uuid": "6a5a7698-690a-409f-99ae-fc113ab138bf"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34F5",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 45.030348
+                    },
+                    "uuid": "6a5a7698-690a-409f-99ae-fc113ab138bf"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3594",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 60.280348
+                    },
+                    "uuid": "42e73495-a019-4150-bcc8-98ff48da5fe1"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3594",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 60.280348
+                    },
+                    "uuid": "42e73495-a019-4150-bcc8-98ff48da5fe1"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A359E",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 57.755826
+                    },
+                    "uuid": "7f71b046-917a-4fae-a65b-fe7e16c3dc8f"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A359E",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 57.755826
+                    },
+                    "uuid": "7f71b046-917a-4fae-a65b-fe7e16c3dc8f"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3245",
+                    "pos": {
+                        "x": 153.22,
+                        "y": 27.260348
+                    },
+                    "uuid": "1fcbe337-d147-4e02-846e-7f1ec4528bd0"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3245",
+                    "pos": {
+                        "x": 153.22,
+                        "y": 27.260348
+                    },
+                    "uuid": "1fcbe337-d147-4e02-846e-7f1ec4528bd0"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A352B",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 52.662254
+                    },
+                    "uuid": "fd350260-b1ca-45de-9cc0-d83a11ffdc9f"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A352B",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 52.662254
+                    },
+                    "uuid": "fd350260-b1ca-45de-9cc0-d83a11ffdc9f"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34EB",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 42.505826
+                    },
+                    "uuid": "2a4b6344-a6a2-4c1f-b7d2-21b127ae0c80"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34EB",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 42.505826
+                    },
+                    "uuid": "2a4b6344-a6a2-4c1f-b7d2-21b127ae0c80"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 152.82,
+                        "y": 73.010348
+                    },
+                    "uuid": "8d80cc5f-4b06-4db4-86b0-ef28e1f3f12c"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 152.82,
+                        "y": 73.010348
+                    },
+                    "uuid": "8d80cc5f-4b06-4db4-86b0-ef28e1f3f12c"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3534",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 55.222495
+                    },
+                    "uuid": "8731e861-993d-4312-a1ff-ffcbdbcebb7b"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3534",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 55.222495
+                    },
+                    "uuid": "8731e861-993d-4312-a1ff-ffcbdbcebb7b"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 29.692495
+                    },
+                    "uuid": "b8e9717b-c8d9-44dd-9eb5-d37e3b2c2fb5"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 29.692495
+                    },
+                    "uuid": "b8e9717b-c8d9-44dd-9eb5-d37e3b2c2fb5"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 32.292495
+                    },
+                    "uuid": "9098a6bf-eae0-4636-90c3-6c2f5d9401fd"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32A0",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 32.292495
+                    },
+                    "uuid": "9098a6bf-eae0-4636-90c3-6c2f5d9401fd"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35EE",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 52.660348
+                    },
+                    "uuid": "5c6a235e-c15a-462b-9e92-6f653cdf14f8"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A35EE",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 52.660348
+                    },
+                    "uuid": "5c6a235e-c15a-462b-9e92-6f653cdf14f8"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34DF",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 40.132495
+                    },
+                    "uuid": "d55b1ce1-8bf4-4dc4-a526-8a8185b40054"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34DF",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 40.132495
+                    },
+                    "uuid": "d55b1ce1-8bf4-4dc4-a526-8a8185b40054"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3524",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 50.127017
+                    },
+                    "uuid": "376717ed-d370-4959-b470-0ea2cd2e4369"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3524",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 50.127017
+                    },
+                    "uuid": "376717ed-d370-4959-b470-0ea2cd2e4369"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A358D",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 62.831064
+                    },
+                    "uuid": "fb660a92-b43f-49d5-b914-c4b5cfa59fdc"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A358D",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 62.831064
+                    },
+                    "uuid": "fb660a92-b43f-49d5-b914-c4b5cfa59fdc"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 73.010348
+                    },
+                    "uuid": "f84570f0-8f86-40f4-8c85-4d0ad12444b2"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 73.010348
+                    },
+                    "uuid": "f84570f0-8f86-40f4-8c85-4d0ad12444b2"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 34.530348
+                    },
+                    "uuid": "9c1b71cf-44fe-4b7f-bf7f-4966704258c9"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 139.42,
+                        "y": 34.530348
+                    },
+                    "uuid": "9c1b71cf-44fe-4b7f-bf7f-4966704258c9"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A353B",
+                    "pos": {
+                        "x": 139.597,
+                        "y": 57.729158
+                    },
+                    "uuid": "120b0677-3c4c-4a01-ac16-be4dc16a15f7"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A353B",
+                    "pos": {
+                        "x": 139.597,
+                        "y": 57.729158
+                    },
+                    "uuid": "120b0677-3c4c-4a01-ac16-be4dc16a15f7"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3580",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 67.932495
+                    },
+                    "uuid": "54b3cb23-cdda-4478-9a22-d5a6d496a8a7"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3580",
+                    "pos": {
+                        "x": 153.77,
+                        "y": 67.932495
+                    },
+                    "uuid": "54b3cb23-cdda-4478-9a22-d5a6d496a8a7"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3563",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 70.440348
+                    },
+                    "uuid": "3caba40b-e39f-4978-b48b-a61a4a54314d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3563",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 70.440348
+                    },
+                    "uuid": "3caba40b-e39f-4978-b48b-a61a4a54314d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A355B",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 67.915826
+                    },
+                    "uuid": "10f8656f-2e78-43fd-a11f-df043ddfb60d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A355B",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 67.915826
+                    },
+                    "uuid": "10f8656f-2e78-43fd-a11f-df043ddfb60d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32F4",
+                    "pos": {
+                        "x": 140.92,
+                        "y": 32.81673
+                    },
+                    "uuid": "d161533a-9b8a-4098-a18a-77c99d62d416"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32F4",
+                    "pos": {
+                        "x": 140.92,
+                        "y": 32.81673
+                    },
+                    "uuid": "d161533a-9b8a-4098-a18a-77c99d62d416"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3549",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 62.820348
+                    },
+                    "uuid": "9d9142ef-0993-42c2-af94-c4f65d40ee76"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3549",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 62.820348
+                    },
+                    "uuid": "9d9142ef-0993-42c2-af94-c4f65d40ee76"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3554",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 65.392495
+                    },
+                    "uuid": "8581a2ea-fa62-4403-b717-3fa40971e4b3"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3554",
+                    "pos": {
+                        "x": 140.052,
+                        "y": 65.392495
+                    },
+                    "uuid": "8581a2ea-fa62-4403-b717-3fa40971e4b3"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3542",
+                    "pos": {
+                        "x": 139.597,
+                        "y": 60.281064
+                    },
+                    "uuid": "5ae11b42-1654-4437-9438-01467169f586"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A3542",
+                    "pos": {
+                        "x": 139.597,
+                        "y": 60.281064
+                    },
+                    "uuid": "5ae11b42-1654-4437-9438-01467169f586"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32F4",
+                    "pos": {
+                        "x": 153.82,
+                        "y": 32.81673
+                    },
+                    "uuid": "a54a2d51-4b66-4d14-b33d-1444b55de06d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32F4",
+                    "pos": {
+                        "x": 153.82,
+                        "y": 32.81673
+                    },
+                    "uuid": "a54a2d51-4b66-4d14-b33d-1444b55de06d"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34FB",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 47.602495
+                    },
+                    "uuid": "1adc2660-8d56-4156-9d7f-5901398f391c"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A34FB",
+                    "pos": {
+                        "x": 139.47,
+                        "y": 47.602495
+                    },
+                    "uuid": "1adc2660-8d56-4156-9d7f-5901398f391c"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 152.82,
+                        "y": 34.530348
+                    },
+                    "uuid": "432045b0-7589-468b-8659-999ac30c51fa"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33C6",
+                    "pos": {
+                        "x": 152.82,
+                        "y": 34.530348
+                    },
+                    "uuid": "432045b0-7589-468b-8659-999ac30c51fa"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32CC",
+                    "pos": {
+                        "x": 140.62,
+                        "y": 30.238161
+                    },
+                    "uuid": "2009ab3a-f4bf-4c63-a0fe-9d170c762787"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A32CC",
+                    "pos": {
+                        "x": 140.62,
+                        "y": 30.238161
+                    },
+                    "uuid": "2009ab3a-f4bf-4c63-a0fe-9d170c762787"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (толщина текста шелкографии из настроек ограничений платы мин. толщина 0,0800 mm; текущая 3,000e-06 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 154.15,
+                        "y": 34.976255
+                    },
+                    "uuid": "dc50af72-15b3-4fb5-bf25-289e8b8f51f6"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Высота текста вне допустимого диапазона (высота текста шелкографии из настроек ограничений платы мин. высота 0,8000 mm; текущая 0,0010 mm)",
+            "items": [
+                {
+                    "description": "Поле обозначения kibuzzard-624A33D7",
+                    "pos": {
+                        "x": 154.15,
+                        "y": 34.976255
+                    },
+                    "uuid": "dc50af72-15b3-4fb5-bf25-289e8b8f51f6"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_height"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C213",
+                    "pos": {
+                        "x": 152.06,
+                        "y": 62.3
+                    },
+                    "uuid": "148b62a6-f4ed-4898-bd38-266d64d357ed"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C215",
+                    "pos": {
+                        "x": 141.75,
+                        "y": 62.31
+                    },
+                    "uuid": "1699bd6f-25b2-4593-8c4a-6a14c5591d15"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C206",
+                    "pos": {
+                        "x": 146.67,
+                        "y": 68.41
+                    },
+                    "uuid": "1712e29e-4e83-4286-af16-ad44f7ba568c"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C204",
+                    "pos": {
+                        "x": 150.38,
+                        "y": 56.15
+                    },
+                    "uuid": "1bc63903-0b09-4aaf-a846-370394033f1d"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Diode_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место D104",
+                    "pos": {
+                        "x": 152.72,
+                        "y": 36.93
+                    },
+                    "uuid": "21e6dbfd-3fc4-4d7d-97f1-63763db67404"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C218",
+                    "pos": {
+                        "x": 147.11,
+                        "y": 67.01
+                    },
+                    "uuid": "22f45a69-bbae-46e1-9caf-e8a450c83b40"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C207",
+                    "pos": {
+                        "x": 149.71,
+                        "y": 42.81
+                    },
+                    "uuid": "34855130-9f90-4bbd-8d52-caa122feb87b"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C203",
+                    "pos": {
+                        "x": 144.82,
+                        "y": 68.41
+                    },
+                    "uuid": "35b93b63-d33e-4e62-a257-f4488bf896bb"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C208",
+                    "pos": {
+                        "x": 146.64,
+                        "y": 55.65
+                    },
+                    "uuid": "40388f4e-6e6d-438d-a212-c408021b40e5"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C205",
+                    "pos": {
+                        "x": 149.43,
+                        "y": 56.15
+                    },
+                    "uuid": "42f57d15-3152-4c56-b079-2cbc7d87d4c4"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'LED_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место D102",
+                    "pos": {
+                        "x": 151.55,
+                        "y": 70.52
+                    },
+                    "uuid": "433dff48-1202-4b4e-9420-0ab7e30a3241"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Package_TO_SOT_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место U201",
+                    "pos": {
+                        "x": 149.51,
+                        "y": 39.8
+                    },
+                    "uuid": "481b3703-3f79-419e-8be2-4ecf6e8523b0"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C221",
+                    "pos": {
+                        "x": 150.27,
+                        "y": 67.01
+                    },
+                    "uuid": "4b69d5f7-65c1-4060-88e1-cc016f1c5b6d"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Package_SO'",
+            "items": [
+                {
+                    "description": "Посад. место U205",
+                    "pos": {
+                        "x": 143.41,
+                        "y": 49.1
+                    },
+                    "uuid": "4c137310-72bd-4a4a-82d5-7771d8faa072"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Capacitor_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место C210",
+                    "pos": {
+                        "x": 151.34,
+                        "y": 50.28
+                    },
+                    "uuid": "4c292eb5-fcd5-43d5-8416-ff0b66a2b95d"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'TYPE-C-31-M-12'",
+            "items": [
+                {
+                    "description": "Посад. место J201",
+                    "pos": {
+                        "x": 146.91,
+                        "y": 29.3
+                    },
+                    "uuid": "587a6d44-3287-41ae-85aa-c5c3dcb785c6"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место D205",
+                    "pos": {
+                        "x": 144.06,
+                        "y": 36.42
+                    },
+                    "uuid": "59096151-c468-47ef-aeca-bf4fc9751b5c"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'RP2040'",
+            "items": [
+                {
+                    "description": "Посад. место U202",
+                    "pos": {
+                        "x": 146.91,
+                        "y": 61.3
+                    },
+                    "uuid": "5d537949-d3ac-447b-bab3-fa03a1967fbf"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C216",
+                    "pos": {
+                        "x": 151.62,
+                        "y": 58.0
+                    },
+                    "uuid": "67733cc4-4c14-4252-bcb6-d1039d00eaad"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'LED_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место D101",
+                    "pos": {
+                        "x": 142.32,
+                        "y": 70.52
+                    },
+                    "uuid": "6eea9f56-bcbd-4902-8b14-9e7c57d6073e"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Connector_PinHeader_2.54mm'",
+            "items": [
+                {
+                    "description": "Посад. место J103",
+                    "pos": {
+                        "x": 149.45,
+                        "y": 73.75
+                    },
+                    "uuid": "71af44f1-1560-4d30-929f-32237ce8c931"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'X322516MLB4SI'",
+            "items": [
+                {
+                    "description": "Посад. место Y201",
+                    "pos": {
+                        "x": 145.32,
+                        "y": 70.52
+                    },
+                    "uuid": "76736ea1-38e6-45fb-b483-672ada9872e3"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R212",
+                    "pos": {
+                        "x": 148.71,
+                        "y": 36.42
+                    },
+                    "uuid": "805c27ab-e8c2-403d-b850-ea8fad95ce8f"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R213",
+                    "pos": {
+                        "x": 142.35,
+                        "y": 55.34
+                    },
+                    "uuid": "89912f45-fad0-4bd0-9e4c-0b6e4295c4fa"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место SW202",
+                    "pos": {
+                        "x": 144.76,
+                        "y": 40.7
+                    },
+                    "uuid": "9cc2a952-6dec-416b-b2d5-c6d4fbd3c11b"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C219",
+                    "pos": {
+                        "x": 147.59,
+                        "y": 55.65
+                    },
+                    "uuid": "9d0d4c6b-dac7-4dc6-b0d4-d59c422ca364"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Diode_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место D103",
+                    "pos": {
+                        "x": 141.02,
+                        "y": 36.92
+                    },
+                    "uuid": "9fc51faa-aaee-4b7d-a7b7-0fcc9f2498f9"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R204",
+                    "pos": {
+                        "x": 148.05,
+                        "y": 53.24
+                    },
+                    "uuid": "a1db63ae-4d7d-4cf4-96bd-3fb1f5f13851"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R214",
+                    "pos": {
+                        "x": 145.005,
+                        "y": 36.42
+                    },
+                    "uuid": "a34d128a-dc02-481e-8e06-3815c2c2290e"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R102",
+                    "pos": {
+                        "x": 144.3,
+                        "y": 66.97
+                    },
+                    "uuid": "a6a4b4bc-099e-43a8-bb50-6fd3b8b82189"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R211",
+                    "pos": {
+                        "x": 141.55,
+                        "y": 40.7
+                    },
+                    "uuid": "a7667561-8617-41dd-8e3e-ae902e695a60"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Aesthetics'",
+            "items": [
+                {
+                    "description": "Посад. место <без обозначения>",
+                    "pos": {
+                        "x": 151.01,
+                        "y": 53.95
+                    },
+                    "uuid": "a7fe07e9-b8cb-411c-8094-3b4a6b44758d"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Capacitor_SMD'",
+            "items": [
+                {
+                    "description": "Посад. место C209",
+                    "pos": {
+                        "x": 151.34,
+                        "y": 45.69
+                    },
+                    "uuid": "b7983e34-f4c0-408a-8703-d3e54b44e11e"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C201",
+                    "pos": {
+                        "x": 151.71,
+                        "y": 42.81
+                    },
+                    "uuid": "c6114a3c-1e82-4cc3-b53b-56f23bc08300"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C212",
+                    "pos": {
+                        "x": 142.1,
+                        "y": 57.12
+                    },
+                    "uuid": "c6839ed1-7a15-422a-bfe9-dbaaf5407e12"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место D202",
+                    "pos": {
+                        "x": 147.76,
+                        "y": 36.42
+                    },
+                    "uuid": "cdae9db5-0d2f-4251-b6ff-66f345e1bc7c"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R203",
+                    "pos": {
+                        "x": 149.0,
+                        "y": 53.24
+                    },
+                    "uuid": "cec54bc4-9c88-4d50-ae7d-0f41e4488cb7"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R101",
+                    "pos": {
+                        "x": 149.995,
+                        "y": 68.855
+                    },
+                    "uuid": "cfe37617-3a83-4fc0-b4ba-8b2eade53ad9"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место R201",
+                    "pos": {
+                        "x": 146.16,
+                        "y": 67.01
+                    },
+                    "uuid": "d49aab28-5c13-42fc-a430-3da305c939d0"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C202",
+                    "pos": {
+                        "x": 148.06,
+                        "y": 67.01
+                    },
+                    "uuid": "ed8d18ee-b29e-42d1-933b-f69b3a10833c"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место C222",
+                    "pos": {
+                        "x": 141.55,
+                        "y": 43.26
+                    },
+                    "uuid": "edc41432-d202-4ec1-b0d8-375d3c539816"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место D201",
+                    "pos": {
+                        "x": 145.96,
+                        "y": 36.42
+                    },
+                    "uuid": "ee51d7a8-65cf-4d43-b1f3-d05e6bca46c5"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Breadstick Footprints'",
+            "items": [
+                {
+                    "description": "Посад. место D203",
+                    "pos": {
+                        "x": 149.66,
+                        "y": 36.42
+                    },
+                    "uuid": "f2058bca-a8dc-46ab-8a20-c53f065c50dc"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Connector_PinHeader_2.54mm'",
+            "items": [
+                {
+                    "description": "Посад. место J102",
+                    "pos": {
+                        "x": 155.8,
+                        "y": 28.03
+                    },
+                    "uuid": "58892a31-c3c6-4299-af1e-222fd7ec9228"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Текущая конфигурация не включает библиотеку посадочных мест 'Connector_PinHeader_2.54mm'",
+            "items": [
+                {
+                    "description": "Посад. место J101",
+                    "pos": {
+                        "x": 138.02,
+                        "y": 28.03
+                    },
+                    "uuid": "c8fa7c08-55cb-4909-bf7d-c2e0f9f0d308"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "Сегмент на Edge.Cuts",
+                    "pos": {
+                        "x": 157.07,
+                        "y": 73.75
+                    },
+                    "uuid": "32bf7f41-d88d-4c28-87e8-c1ba012985c2"
+                },
+                {
+                    "description": "Прямоугольник на F.Silkscreen",
+                    "pos": {
+                        "x": 155.165,
+                        "y": 45.81
+                    },
+                    "uuid": "77da69f1-4a7e-4daf-b100-27fb75871e8c"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        }
+    ]
+}

@@ -338,3 +338,22 @@ CONSEQUENCES — prior conclusions corrected:
 REAL LEVER (was mis-scoped as a ceiling): high-fanout TRACE routing with persistence — route the
 hard nets with long detours + vias instead of abandoning them, without shaving clearance. The
 human spends 56% more copper to do it. This is router quality, and it is the genuine open problem.
+
+## MULTI-BOARD CONFIRMATION (2026-06-18): all originals are 2-layer human-routed
+
+  board     HUMAN original           OURS
+  mitayi    0 unconn, 0 err          63 unconn   (human is PERFECT: 0/0, 111 vias, 1042mm)
+  zuluscsi  0 unconn, 5 err          65 unconn   (243 vias, 6224mm)
+  rp2040    3 unconn, 65 err         84 unconn   (112 vias, 832mm; even the human left 3 here)
+
+DEFINITIVE: every benchmark is human-routed on 2 LAYERS to ~0 unconnected. "Needs 4 layers" is
+wrong for all three. Our gap (63/65/84) is ENTIRELY router quality. The HONEST success metric is
+to MATCH THE HUMAN (0 unconnected on 2 layers) — a router-quality target, fully achievable, not a
+layer ceiling. Every "ceiling" conclusion in this doc above (F3-v2, L1 unroutable_2layer) is
+SUPERSEDED by this: the original product is the ground truth, and it routes on 2 layers.
+
+THE REAL OPEN PROBLEM (correctly scoped at last): high-fanout TRACE routing with human-like
+persistence — route every net with long detours + vias instead of abandoning hard nets, without
+shaving clearance. The human spends more copper (zuluscsi 6224 vs our 3978mm) and gets 0/5; we
+get 65/108. Close that gap. v2 gridless routing would help legality (the 108 errors), but the
+unconnected gap is about PERSISTENCE/completeness, achievable in the current grid router.

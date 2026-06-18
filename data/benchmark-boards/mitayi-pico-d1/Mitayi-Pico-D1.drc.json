@@ -1,0 +1,161 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-06-18T13:00:24",
+    "ignored_checks": [
+        {
+            "description": "Board edge clearance violation",
+            "key": "copper_edge_clearance"
+        },
+        {
+            "description": "Courtyards overlap",
+            "key": "courtyards_overlap"
+        },
+        {
+            "description": "Footprint has no courtyard defined",
+            "key": "missing_courtyard"
+        },
+        {
+            "description": "Track endpoint not centered on via",
+            "key": "track_not_centered_on_via"
+        },
+        {
+            "description": "Tuning profile track geometries",
+            "key": "tuning_profile_track_geometries"
+        },
+        {
+            "description": "Extra footprint",
+            "key": "extra_footprint"
+        },
+        {
+            "description": "Footprint doesn't match symbol's footprint filters",
+            "key": "footprint_filters_mismatch"
+        },
+        {
+            "description": "Silkscreen clearance",
+            "key": "silk_overlap"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "key": "silk_over_copper"
+        },
+        {
+            "description": "Text height out of range",
+            "key": "text_height"
+        },
+        {
+            "description": "Isolated copper fill",
+            "key": "isolated_copper"
+        },
+        {
+            "description": "PTH inside courtyard",
+            "key": "pth_inside_courtyard"
+        },
+        {
+            "description": "NPTH inside courtyard",
+            "key": "npth_inside_courtyard"
+        },
+        {
+            "description": "Unresolved text variable",
+            "key": "unresolved_variable"
+        },
+        {
+            "description": "Footprint component type doesn't match footprint pads",
+            "key": "footprint_type_mismatch"
+        },
+        {
+            "description": "Footprint not found in libraries",
+            "key": "lib_footprint_issues"
+        },
+        {
+            "description": "Footprint doesn't match copy in library",
+            "key": "lib_footprint_mismatch"
+        }
+    ],
+    "included_severities": [
+        "error",
+        "warning"
+    ],
+    "kicad_version": "10.0.3",
+    "schematic_parity": [],
+    "source": "Mitayi-Pico-D1.kicad_pcb",
+    "unconnected_items": [],
+    "violations": [
+        {
+            "description": "Толщина текста вне допустимого диапазона (символы шрифта TrueType имеют недостаточную толщину штриха)",
+            "items": [
+                {
+                    "description": "Надпись на плате 'www.circuitstate.com' на B.Silkscreen",
+                    "pos": {
+                        "x": 156.1,
+                        "y": 90.05
+                    },
+                    "uuid": "35c3208b-2869-4e38-a298-2e797b9b0508"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Толщина текста вне допустимого диапазона (символы шрифта TrueType имеют недостаточную толщину штриха)",
+            "items": [
+                {
+                    "description": "Надпись на плате 'Designed with KiCad' на B.Silkscreen",
+                    "pos": {
+                        "x": 156.1,
+                        "y": 91.85
+                    },
+                    "uuid": "eb5890cb-280f-4a97-8cec-3ef89e90f759"
+                }
+            ],
+            "severity": "warning",
+            "type": "text_thickness"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "Сегмент на Edge.Cuts",
+                    "pos": {
+                        "x": 121.5,
+                        "y": 99.8
+                    },
+                    "uuid": "3ba5b8a8-27b3-4824-b06d-404b06e58086"
+                },
+                {
+                    "description": "Сегмент от J2 на F.Silkscreen",
+                    "pos": {
+                        "x": 121.93,
+                        "y": 84.59
+                    },
+                    "uuid": "b884f8f0-a23a-4c8b-92c7-09bd4b2e36d7"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "Сегмент на Edge.Cuts",
+                    "pos": {
+                        "x": 121.5,
+                        "y": 99.8
+                    },
+                    "uuid": "3ba5b8a8-27b3-4824-b06d-404b06e58086"
+                },
+                {
+                    "description": "Сегмент от J2 на F.Silkscreen",
+                    "pos": {
+                        "x": 121.93,
+                        "y": 93.99
+                    },
+                    "uuid": "5bf9c7c6-1253-46f8-8023-b39159cb8346"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        }
+    ]
+}
