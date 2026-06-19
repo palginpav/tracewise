@@ -21,6 +21,7 @@ from tracewise.route.engine.astar import simplify
 from tracewise.route.engine.exact_geom import nudge_endpoint, nudge_endpoint_in_region
 from tracewise.route.engine.grid import Grid
 from tracewise.route.engine.multi import Net, NetRoute, route_all
+from tracewise.route.gridless.adapter import GridlessNetRoute
 from tracewise.sexpr import atom, node, parse_file, write_file
 
 PAD_SCRIPT = """
@@ -169,6 +170,27 @@ def emit_routes(
             continue
         if net_atom(name) is None:
             continue
+
+        # ------------------------------------------------------------------
+        # World-centerline branch: GridlessNetRoute carries exact world-mm
+        # waypoints in world_paths.  Emit them directly — no grid.to_world
+        # re-snap.  Grid nets continue through the existing resolved-map path.
+        # ------------------------------------------------------------------
+        if isinstance(nr, GridlessNetRoute) and nr.world_paths:
+            layer = layer_name[0]  # Phase 1: F.Cu only
+            for wpath in nr.world_paths:
+                if len(wpath) < 2:
+                    continue
+                for (xa, ya), (xb, yb) in zip(wpath, wpath[1:], strict=False):
+                    root.insert(node("segment",
+                        node("start", f"{xa:.3f}", f"{ya:.3f}"),
+                        node("end", f"{xb:.3f}", f"{yb:.3f}"),
+                        node("width", str(track_mm)),
+                        node("layer", atom(layer, quote=True)),
+                        net_atom(name)))
+                    segs += 1
+            continue  # done with this net; skip the grid resolved-map path
+
         net_vias: set[tuple[float, float]] = set()
         for path in nr.paths:
             runs = simplify(path)
@@ -360,7 +382,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        report_ceiling: bool = False,
                        allow_partial: bool = True,
                        salvage_escape: int = 0,
-                       nudge_vias: bool = False) -> dict:
+                       nudge_vias: bool = False,
+                       gridless_nets: set[str] | None = None) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -387,7 +410,11 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     router missed it under its time/budget) or ``UNROUTABLE_2LAYER`` (no path
     exists — genuinely needs 4+ layers or re-layout).  The result is added to
     the summary dict under the key ``"ceiling"``.  This is read-only: neither
-    the board file nor the grid is modified."""
+    the board file nor the grid is modified.
+
+    `gridless_nets` is an optional set of net names to route via the
+    visibility-graph gridless engine.  ``None`` (default) = 100% grid path,
+    byte-identical to the pre-Phase-2 behaviour.  Requires shapely>=2.0."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors, obstacles, anchor_rects = build_problem(
@@ -400,6 +427,27 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
         (geo["via_mm"] / 2 + geo["clearance_mm"] + geo["track_mm"] / 2) / pitch))
     for n in nets:
         n.via_halfwidth_cells = via_half
+
+    # Gridless context: assemble kwargs passed through route_all to the
+    # per-net gridless wrapper.  extra_gridless_obstacles is a mutable list
+    # that accumulates Shapely obstacles for subsequent gridless nets.
+    gridless_kwargs: dict | None = None
+    if gridless_nets:
+        from tracewise.route.gridless.geom import HAVE_SHAPELY
+        if not HAVE_SHAPELY:
+            raise ImportError(
+                "gridless_nets requires shapely>=2.0; "
+                "pip install tracewise[gridless]"
+            )
+        bd = data["board"]
+        gridless_kwargs = {
+            "pads": data["pads"],
+            "geo": geo,
+            "board_bbox": (bd["x1"], bd["y1"], bd["x2"], bd["y2"]),
+            "anchors": anchors,
+            "extra_gridless_obstacles": [],
+        }
+
     if engine == "pathfinder":
         from tracewise.route.engine.pathfinder import route_all_pathfinder
         results = route_all_pathfinder(grid, nets, via_cost=via_cost,
@@ -409,7 +457,9 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                             ripup_factor=ripup_factor, via_cost=via_cost,
                             history_factor=history_factor,
                             allow_partial=allow_partial,
-                            salvage_escape=salvage_escape)
+                            salvage_escape=salvage_escape,
+                            gridless_nets=gridless_nets,
+                            gridless_kwargs=gridless_kwargs)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"],

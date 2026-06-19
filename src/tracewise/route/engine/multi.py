@@ -145,12 +145,94 @@ def _nearest_victim(failed: Net, routed: list[NetRoute]) -> NetRoute | None:
     return best
 
 
+def _route_net_gridless_wrapped(grid: Grid, net: Net, kwargs: dict) -> NetRoute:
+    """Route *net* via the gridless engine and return a ``GridlessNetRoute``.
+
+    Extracts the two pad world-coordinates from *net.pads* + *grid* (reverse-
+    mapping cell -> world via ``grid.to_world``), calls ``route_net_gridless``,
+    and wraps the result in a ``GridlessNetRoute`` whose ``cells`` field is
+    populated by ``rasterize_into_grid`` so ``_mark`` / occupancy ledger work.
+
+    Returns a plain failed ``NetRoute`` (``ok=False``) when the net has fewer
+    than two pads, when ``pads``/``geo``/``board_bbox`` are absent from
+    *kwargs*, or when the gridless router finds no path.
+    """
+    from tracewise.route.gridless.adapter import to_gridless_netroute
+    from tracewise.route.gridless.route import route_net_gridless
+
+    if len(net.pads) < 2:
+        nr = NetRoute(net=net, ok=True)  # trivially connected
+        return nr
+
+    pads = kwargs.get("pads")
+    geo = kwargs.get("geo")
+    board_bbox = kwargs.get("board_bbox")
+    if pads is None or geo is None or board_bbox is None:
+        return NetRoute(net=net, ok=False,
+                        reason="gridless_kwargs missing pads/geo/board_bbox")
+
+    # Resolve world-mm coordinates for the first and second pad.
+    # net.pads are (layer, iy, ix) tuples; reverse-map via grid.to_world.
+    # Only 2-pin nets are supported in Phase 1.
+    pad_a_cell = net.pads[0]
+    pad_b_cell = net.pads[1]
+    pad_a = grid.to_world(pad_a_cell[1], pad_a_cell[2])
+    pad_b = grid.to_world(pad_b_cell[1], pad_b_cell[2])
+
+    # Use anchors if provided (exact world-mm pad centres, not grid-snapped).
+    anchors = kwargs.get("anchors")
+    if anchors is not None:
+        pad_a = anchors.get(pad_a_cell, pad_a)
+        pad_b = anchors.get(pad_b_cell, pad_b)
+
+    # Build extra_obstacles from already-routed gridless nets' world paths.
+    # Grid copper is already in grid.cells; only gridless copper needs explicit
+    # Shapely obstacles since it may not be fully captured by the grid cells.
+    extra_obstacles = kwargs.get("extra_gridless_obstacles") or []
+
+    result = route_net_gridless(
+        pad_a=pad_a,
+        pad_b=pad_b,
+        pads=pads,
+        net_name=net.name,
+        geo=geo,
+        board_bbox=board_bbox,
+        extra_obstacles=extra_obstacles,
+    )
+
+    if not result.ok:
+        return NetRoute(net=net, ok=False, reason=result.reason)
+
+    nr = to_gridless_netroute(net, result.world_paths, grid)
+
+    # Accumulate Shapely obstacles for subsequent gridless nets in this run.
+    # Buffer each world segment by track_mm/2 + clearance_mm (FIX-6).
+    if "extra_gridless_obstacles" in kwargs:
+        try:
+            from shapely.geometry import LineString
+
+            from tracewise.route.gridless.geom import snap
+            track_mm = geo.get("track_mm", 0.2)
+            clearance_mm = geo.get("clearance_mm", 0.2)
+            inflate = track_mm / 2.0 + clearance_mm
+            for path in result.world_paths:
+                if len(path) >= 2:
+                    ls = snap(LineString(path).buffer(inflate, cap_style=2))
+                    kwargs["extra_gridless_obstacles"].append(ls)
+        except Exception:  # noqa: BLE001 — Shapely may be absent; skip silently
+            pass
+
+    return nr
+
+
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               ripup_factor: int = 8, escape: int = 0,
               priority: dict[str, int] | None = None,
               history_factor: float = 0.0,
               allow_partial: bool = False,
               salvage_escape: int = 0,
+              gridless_nets: set[str] | None = None,
+              gridless_kwargs: dict | None = None,
               **_legacy) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
@@ -164,7 +246,18 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     `history_factor` > 0 turns on negotiated-congestion pricing (salvaged from
     the PathFinder experiment): each rip-up deposits congestion history on the
     victim's cells, and subsequent routes are nudged around those chronically-
-    contested regions. 0 (default) reproduces the original pure rip-up."""
+    contested regions. 0 (default) reproduces the original pure rip-up.
+
+    `gridless_nets` is an optional set of net names to route via the
+    visibility-graph gridless engine instead of the grid A*.  Nets not in the
+    set route on the grid as today.  ``None`` (default) = 100% grid path,
+    byte-identical to the pre-Phase-2 behaviour.  Gridless copper is rasterized
+    into the shared grid ledger so subsequently-routed grid nets see it as
+    occupied.
+
+    `gridless_kwargs` passes board-level context to ``route_net_gridless``
+    (keys: ``pads``, ``geo``, ``board_bbox``).  Required when `gridless_nets`
+    is non-empty."""
     if _legacy:
         # Silently accept (and ignore) the removed `time_budget_s` keyword so
         # callers that still pass it do not crash immediately.  Emit a warning
@@ -193,8 +286,15 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         # solutions are preserved; partial routing is a last-resort salvage pass
         # below (applying it in-loop disabled rip-up for partially-routed nets
         # and cascaded — measured: mitayi 63->72).
-        nr = route_net(grid, net, via_cost=via_cost, escape=escape,
-                       history=history, history_factor=history_factor)
+
+        # Gridless dispatch: route designated nets via the visibility-graph
+        # engine.  The result is a GridlessNetRoute (IS-A NetRoute) so _mark,
+        # rip-up victim selection, and the salvage pass all operate uniformly.
+        if gridless_nets and net.name in gridless_nets:
+            nr = _route_net_gridless_wrapped(grid, net, gridless_kwargs or {})
+        else:
+            nr = route_net(grid, net, via_cost=via_cost, escape=escape,
+                           history=history, history_factor=history_factor)
         if nr.ok:
             _mark(grid, nr, 1)
             routed.append(nr)
