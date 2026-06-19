@@ -873,3 +873,34 @@ all-legal + connectivity≥baseline+relieves≥1 + deterministic + runtime ~2× 
 full above, to measure the locality scheme's scale BEFORE the M1 package is built. The
 super-cell congestion model, determinism strategy, Shapely dependency, `GridlessNetRoute`
 adapter, emit/realize→DRC loop, and staged milestones all STAND.
+
+---
+
+## M1 SCALE SPIKE — first run (2026-06-19): NO-GO as-run; substrate NOT disproven
+
+`scripts/spike1_gridless_congested_region.py` routed 10 nets through the mitayi RP2040 (U3) region.
+Result NO-GO as-run, but the diagnosis is decisive: **3 of 4 failures were spike defects, 1 was real,
+and the substrate (visibility-graph + locality) is NOT disproven.** CDT fallback NOT triggered.
+
+Findings:
+1. **Legality (GND) — spike bug (false positive):** `validate_waypoints` passed pre-inflated segment
+   obstacles to `is_legal`, which subtracts `track_hw` AGAIN (double-count). The waypoints are inside
+   Shapely free_space. Fix: use Shapely `free_space.contains()` as the sole waypoint legality oracle.
+2. **Legality (USB-DM) — REAL DESIGN GAP (now folded into the design):** after an adjacent net (+1V1)
+   routes, the own-net start-pad center fell INSIDE +1V1's copper buffer, so the windowed free_space
+   excluded the start point → A* started outside free space → illegal. **The gridless free-space build
+   MUST carve the routing net's OWN pad rects out of the accumulated-obstacle set before union/difference
+   — mirroring `build_problem`'s existing `carve` logic. This is now a substrate requirement.**
+3. **Connectivity criterion was untestable here — milestone recalibration:** the dense-but-2-pin-F.Cu
+   region is routed 10/10 by the grid, so "relieve ≥1 net" cannot be shown on a SINGLE-LAYER spike. The
+   connectivity gap lives in multi-pin power nets + via-requiring nets. **Therefore the M1 scale spike's
+   job is narrowed to: legality-under-accumulation + runtime + determinism at scale. Connectivity-relief
+   validation moves to M3 (vias / 2-layer), where the grid actually fails.**
+4. **Runtime 6.58× grid — the one genuine risk:** the spike did NOT implement the designed STRtree
+   visibility-edge pruning (locality mechanism #3); visibility checks were O(n²·obstacles). Must
+   implement STRtree (and, if still >2×, the reduced taut-string corner set) and re-measure.
+5. **Determinism — harness bug:** isolated routing is byte-identical; the grid-baseline run contaminated
+   shared state before the determinism gate. Fix: run the determinism gate before the grid baseline.
+
+**Next:** apply fixes 1,2,4,5 + implement STRtree (3), recalibrate criteria (legality+runtime+determinism
+only), re-run. Real go/no-go pending that re-run.
