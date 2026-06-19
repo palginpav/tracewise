@@ -1,4 +1,4 @@
-"""tracewise.route.gridless — FAR gridless router (M1 Phase 1 + Phase 2 adapter).
+"""tracewise.route.gridless — FAR gridless router (M1 Phase 1 + Phase 2 adapter + M2 negotiate).
 
 Public API
 ----------
@@ -12,10 +12,15 @@ to_gridless_netroute
     Build a GridlessNetRoute from a routed result.
 HAVE_SHAPELY
     True if shapely>=2.0 / GEOS>=3.8.0 is installed; False otherwise.
+route_gridless_set
+    M2: route a set of gridless nets with congestion negotiation + bounded rip-up.
+GridlessSetNetResult
+    M2: per-net result from route_gridless_set.
 """
 
 from tracewise.route.gridless.adapter import GridlessNetRoute, to_gridless_netroute
 from tracewise.route.gridless.geom import HAVE_SHAPELY
+from tracewise.route.gridless.negotiate import GridlessSetNetResult, route_gridless_set
 from tracewise.route.gridless.route import GridlessRouteResult, route_net_gridless
 
 __all__ = [
@@ -24,4 +29,6 @@ __all__ = [
     "GridlessNetRoute",
     "to_gridless_netroute",
     "HAVE_SHAPELY",
+    "route_gridless_set",
+    "GridlessSetNetResult",
 ]

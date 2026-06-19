@@ -383,7 +383,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        allow_partial: bool = True,
                        salvage_escape: int = 0,
                        nudge_vias: bool = False,
-                       gridless_nets: set[str] | None = None) -> dict:
+                       gridless_nets: set[str] | None = None,
+                       gridless_negotiate: bool = False) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -414,7 +415,14 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
 
     `gridless_nets` is an optional set of net names to route via the
     visibility-graph gridless engine.  ``None`` (default) = 100% grid path,
-    byte-identical to the pre-Phase-2 behaviour.  Requires shapely>=2.0."""
+    byte-identical to the pre-Phase-2 behaviour.  Requires shapely>=2.0.
+
+    `gridless_negotiate` (default ``False``) enables M2 staged
+    congestion-negotiation for the gridless subset: ``route_gridless_set``
+    handles the whole gridless set internally (congestion history + bounded
+    rip-up among the gridless nets), then their copper is rasterized into the
+    shared grid ledger before the grid pass runs.  Ignored when
+    ``gridless_nets`` is ``None`` or empty."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors, obstacles, anchor_rects = build_problem(
@@ -431,6 +439,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     # Gridless context: assemble kwargs passed through route_all to the
     # per-net gridless wrapper.  extra_gridless_obstacles is a mutable list
     # that accumulates Shapely obstacles for subsequent gridless nets.
+    # board_outline and drill_obstacles extend the obstacle model to prevent
+    # copper_edge_clearance and drill-clearance DRC violations.
     gridless_kwargs: dict | None = None
     if gridless_nets:
         from tracewise.route.gridless.geom import HAVE_SHAPELY
@@ -439,13 +449,28 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                 "gridless_nets requires shapely>=2.0; "
                 "pip install tracewise[gridless]"
             )
+        from tracewise.route.gridless.geom import (
+            extract_board_outline,
+            extract_drill_obstacles,
+        )
         bd = data["board"]
+        board_bbox_tuple = (bd["x1"], bd["y1"], bd["x2"], bd["y2"])
+        # Extract board outline polygon from Edge.Cuts layer
+        _board_outline = extract_board_outline(board)
+        # Extract drill-hole circular obstacles (through-hole pads + vias)
+        _drill_obstacles = extract_drill_obstacles(
+            board,
+            clearance_mm=geo["clearance_mm"],
+            track_mm=geo["track_mm"],
+        )
         gridless_kwargs = {
             "pads": data["pads"],
             "geo": geo,
-            "board_bbox": (bd["x1"], bd["y1"], bd["x2"], bd["y2"]),
+            "board_bbox": board_bbox_tuple,
             "anchors": anchors,
             "extra_gridless_obstacles": [],
+            "board_outline": _board_outline,
+            "drill_obstacles": _drill_obstacles,
         }
 
     if engine == "pathfinder":
@@ -459,7 +484,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                             allow_partial=allow_partial,
                             salvage_escape=salvage_escape,
                             gridless_nets=gridless_nets,
-                            gridless_kwargs=gridless_kwargs)
+                            gridless_kwargs=gridless_kwargs,
+                            gridless_negotiate=gridless_negotiate)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"],

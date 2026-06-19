@@ -190,6 +190,9 @@ def _route_net_gridless_wrapped(grid: Grid, net: Net, kwargs: dict) -> NetRoute:
     # Shapely obstacles since it may not be fully captured by the grid cells.
     extra_obstacles = kwargs.get("extra_gridless_obstacles") or []
 
+    board_outline = kwargs.get("board_outline")
+    drill_obstacles = kwargs.get("drill_obstacles")
+
     result = route_net_gridless(
         pad_a=pad_a,
         pad_b=pad_b,
@@ -198,6 +201,8 @@ def _route_net_gridless_wrapped(grid: Grid, net: Net, kwargs: dict) -> NetRoute:
         geo=geo,
         board_bbox=board_bbox,
         extra_obstacles=extra_obstacles,
+        board_outline=board_outline,
+        drill_obstacles=drill_obstacles,
     )
 
     if not result.ok:
@@ -233,6 +238,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               salvage_escape: int = 0,
               gridless_nets: set[str] | None = None,
               gridless_kwargs: dict | None = None,
+              gridless_negotiate: bool = False,
               **_legacy) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
@@ -257,7 +263,20 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
 
     `gridless_kwargs` passes board-level context to ``route_net_gridless``
     (keys: ``pads``, ``geo``, ``board_bbox``).  Required when `gridless_nets`
-    is non-empty."""
+    is non-empty.
+
+    `gridless_negotiate` (default ``False``) enables the M2 staged
+    congestion-negotiation path for the gridless subset.  When ``True`` and
+    ``gridless_nets`` is non-empty, the entire gridless set is routed first via
+    ``route_gridless_set`` (congestion history + bounded rip-up among the gridless
+    nets); each successfully routed gridless net is rasterized into the shared
+    grid ledger so that the subsequent grid pass sees their copper as occupied.
+    Grid nets are then routed by the EXISTING grid rip-up loop unchanged.
+    Geometry-blocked gridless nets are reported as failed with reason
+    ``"geometry-blocked (M3)"`` and do NOT enter the grid rip-up loop.
+
+    Hard invariant: ``gridless_nets=None`` or empty (regardless of
+    ``gridless_negotiate``) → behaviour is byte-identical to the pre-M2 engine."""
     if _legacy:
         # Silently accept (and ignore) the removed `time_budget_s` keyword so
         # callers that still pass it do not crash immediately.  Emit a warning
@@ -270,13 +289,101 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     import numpy as np
 
     results: dict[str, NetRoute] = {}
+
+    # ------------------------------------------------------------------
+    # M2 STAGED PATH: negotiate-route the gridless subset FIRST, then
+    # rasterize their copper into the shared grid ledger so the grid
+    # remainder sees them as obstacles.  The grid rip-up loop below runs
+    # UNCHANGED and only processes nets not in gridless_nets.
+    #
+    # Hard invariant: if gridless_nets is None/empty, this block is a
+    # no-op and the code falls through to the standard grid path below,
+    # producing byte-identical results.
+    # ------------------------------------------------------------------
+    _gridless_pre_routed: set[str] = set()  # names handled in this block
+    if gridless_negotiate and gridless_nets:
+        from tracewise.route.gridless.adapter import to_gridless_netroute
+        from tracewise.route.gridless.negotiate import route_gridless_set
+
+        gk = gridless_kwargs or {}
+        pads = gk.get("pads")
+        geo = gk.get("geo")
+        board_bbox = gk.get("board_bbox")
+        anchors = gk.get("anchors")
+        neg_ripup_factor = gk.get("negotiate_ripup_factor", ripup_factor)
+        neg_history_factor = gk.get("negotiate_history_factor", 3.0)
+        neg_window_mm = gk.get("negotiate_window_mm", 4.0)
+        neg_geom_threshold = gk.get("negotiate_geom_block_threshold", 0.5)
+        neg_board_outline = gk.get("board_outline")
+        neg_drill_obstacles = gk.get("drill_obstacles")
+
+        if pads is not None and geo is not None and board_bbox is not None:
+            by_name_all = {n.name: n for n in nets}
+            net_set = []
+            for net_name in sorted(gridless_nets):  # sorted for determinism
+                net = by_name_all.get(net_name)
+                if net is None or len(net.pads) < 2:
+                    continue
+                pad_a_cell = net.pads[0]
+                pad_b_cell = net.pads[1]
+                pad_a = grid.to_world(pad_a_cell[1], pad_a_cell[2])
+                pad_b = grid.to_world(pad_b_cell[1], pad_b_cell[2])
+                if anchors is not None:
+                    pad_a = anchors.get(pad_a_cell, pad_a)
+                    pad_b = anchors.get(pad_b_cell, pad_b)
+                net_set.append({
+                    "net_name": net_name,
+                    "pad_a": pad_a,
+                    "pad_b": pad_b,
+                })
+
+            if net_set:
+                neg_results = route_gridless_set(
+                    net_set=net_set,
+                    pads=pads,
+                    geo=geo,
+                    board_bbox=board_bbox,
+                    anchors=anchors,
+                    history_factor=neg_history_factor,
+                    ripup_factor=neg_ripup_factor,
+                    window_mm_start=neg_window_mm,
+                    geom_block_threshold=neg_geom_threshold,
+                    board_outline=neg_board_outline,
+                    drill_obstacles=neg_drill_obstacles,
+                )
+
+                for net_name, neg_res in neg_results.items():
+                    net = by_name_all.get(net_name)
+                    if net is None:
+                        continue
+                    _gridless_pre_routed.add(net_name)
+                    if neg_res.ok and neg_res.world_paths:
+                        # Wrap in GridlessNetRoute, rasterize, mark grid ledger
+                        nr = to_gridless_netroute(net, neg_res.world_paths, grid)
+                        _mark(grid, nr, 1)
+                        results[net_name] = nr
+                    else:
+                        # Failed / geometry-blocked: report as a failed NetRoute
+                        results[net_name] = NetRoute(
+                            net=net, ok=False, reason=neg_res.reason
+                        )
+
     routed: list[NetRoute] = []
     by_name = {n.name: n for n in nets}
     budget = ripup_factor * max(len(nets), 1)
     history = (np.zeros((grid.layers, grid.ny, grid.nx), np.float64)
                if history_factor > 0.0 else None)
 
-    queue = order_nets(nets, priority)
+    # Populate routed list from already-committed gridless nets so grid rip-up
+    # can select them as victims if needed (staged coexistence: no cross-substrate
+    # rip-up in M2 — they are already in grid.hard so the grid router avoids them)
+    for _name, nr in results.items():
+        if nr.ok:
+            routed.append(nr)
+
+    queue = order_nets(
+        [n for n in nets if n.name not in _gridless_pre_routed], priority
+    )
     attempts: dict[str, int] = {}
     while queue and budget > 0:
         net = queue.pop(0)

@@ -74,6 +74,8 @@ def route_net_gridless(
     board_bbox: tuple[float, float, float, float],
     extra_obstacles: list | None = None,
     window_mm: float = 4.0,
+    board_outline: object | None = None,
+    drill_obstacles: list | None = None,
 ) -> GridlessRouteResult:
     """Route a 2-pin net gridlessly via visibility-graph A*.
 
@@ -96,6 +98,14 @@ def route_net_gridless(
         (FIX-6).  Pass ``None`` or ``[]`` when routing the first net.
     window_mm:
         Initial routing window half-margin around the pad bounding box.
+    board_outline:
+        Optional Shapely Polygon of the board interior (from Edge.Cuts).  When
+        provided, free space is clipped to the outline shrunk inward by
+        ``clearance_mm + track_mm / 2`` so track centrelines stay
+        legal-distance from the board edge.
+    drill_obstacles:
+        Optional list of pre-inflated Shapely circle Polygons for drill holes
+        (through-hole pads and vias), inflated by ``clearance_mm + track_mm/2``.
 
     Returns
     -------
@@ -143,6 +153,8 @@ def route_net_gridless(
             track_mm,
             extra_obstacles,
             window_bbox,
+            board_outline=board_outline,
+            drill_obstacles=drill_obstacles,
         )
         build_time = time.perf_counter() - t_build
 

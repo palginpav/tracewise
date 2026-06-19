@@ -1030,3 +1030,30 @@ Result: M2 spike runtime **2.69× grid `--quality`** (≤3× target MET), with A
 10/10 routed, 0 new DRC errors, 0 board-scale escalations, byte-identical determinism, rip-up converges,
 312 tests green. The CDT-navmesh fallback is NOT needed for this scale. M2 spike-level work (mechanism +
 runtime) is GO; next is the M2 production integration of congestion+rip-up into `route_all`.
+
+---
+
+## M2 PRODUCTION INTEGRATION — gate met (2026-06-19)
+
+Staged integration into `route_all`/`route_board_engine` via `gridless_negotiate=True`: the gridless
+subset is routed by the negotiated mechanism (`gridless/negotiate.py` — congestion history + bounded
+rip-up + cycle-breaking + geometry-blocked quarantine), rasterized into the shared grid ledger, then
+the grid remainder routes seeing that copper. `gridless_negotiate=False`/`gridless_nets=None` is
+byte-identical to the pre-M2 engine.
+
+**Obstacle-model completion (the fix that closed the gate):** the gridless free-space build now models
+the **board edge** (Edge.Cuts polygon, free space shrunk inward by clearance+track_hw) and **drill
+holes** (pad + via drills as inflated circle obstacles, 224 on mitayi) — previously F.Cu pads only.
+This eliminated the full-board copper_edge_clearance + hole regression.
+
+**M2 gate (independently verified, `scripts/_verify_m2_gate.py`, same method as the 48/89 grid baseline,
+gridless subset = QSPI_SD0/SD1/SD3, D2-A, D2-K, J2-CC1):**
+- unconnected **45 ≤ 48** ✓ ; errors **73–76 ≤ 89** ✓ (improvement on BOTH axes); **copper_edge_clearance = 0** ✓.
+- Routing deterministic (unconnected stable at 45 across runs; gridless mechanism byte-identical per
+  spike; grid path hardened). DRC error COUNT varies ±3 (solder_mask_bridge/clearance) — this is the
+  **KiCad pcbnew zone-fill C++ non-determinism** documented since the M1 determinism work, amplified by
+  `synth_power_pours=True`; NOT router non-determinism. rip-up converges.
+
+**Open (separate, next):** corridor-blocking — gridless copper can block grid nets (staged one-way
+barrier); 3/6 subset nets failed on tight geometry. The board still improved net-net, but full
+relief needs cross-substrate awareness or smarter subset selection (M2.1 / folds toward M3 vias).
