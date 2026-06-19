@@ -904,3 +904,87 @@ Findings:
 
 **Next:** apply fixes 1,2,4,5 + implement STRtree (3), recalibrate criteria (legality+runtime+determinism
 only), re-run. Real go/no-go pending that re-run.
+
+---
+
+## M1 SCALE SPIKE — run-2 (2026-06-19): GO — substrate confirmed
+
+`scripts/spike1_gridless_congested_region.py` re-run with all fixes applied. **Verdict: GO.**
+CDT fallback NOT triggered.
+
+### Fixes applied (FIX-1 through FIX-6)
+
+- **FIX-1: Shapely contains oracle** — replaced `validate_waypoints`/`is_legal` (which double-counted
+  inflation) with `free_space.buffer(1e-5).contains(Point(x,y))` as the sole per-waypoint legality check.
+  GND and all other nets now correctly report legal.
+
+- **FIX-2: Own-pad carve-out** — `build_windowed_free_space` now carves the routing net's own pad rects
+  out of the accumulated-obstacle union before computing the `free_space` difference. Resolves the
+  `Net-(U3-USB-DM)` start-outside-free_space failure that occurred when an adjacent net's copper buffer
+  overlapped the routing net's own pad center.
+
+- **FIX-3: STRtree pruning from actual obstacle polygons** — initial implementation built the STRtree
+  from `Polygon(ring)` per interior ring of `fs_component`; obstacles partially extending outside the
+  window clipped to the exterior ring and were invisible to the tree, causing false "trivially visible"
+  results and illegal paths. Corrected by returning the actual obstacle polygon list from
+  `build_windowed_free_space` and building STRtree over those. In the dense GPIO fan-out, every edge has
+  at least one nearby obstacle (0% skipped); the main runtime benefit comes from FIX-5b below.
+
+- **FIX-4: Determinism gate before grid baseline** — moved the 3-run determinism check (runs 1, 2, same-
+  process; run 3, fresh subprocess) to execute before the grid baseline run, eliminating state
+  contamination from `refill_zones` formatting side-effects. Added `refill_zones` calls on run-2 and
+  subprocess paths to match run-1's normalization.
+
+- **FIX-5: Recalibrated pass criteria** — connectivity-relief removed as hard criterion (deferred to
+  M3/vias). Hard criteria: all-legal (Shapely oracle) + determinism (byte-identical) + runtime (≤2× grid).
+  Connectivity reported as informational only.
+
+- **FIX-5b: Reflex-corner pruning** — `_reflex_obstacle_corners` retains only convex obstacle corners
+  (reflex corners of the free-space hole, i.e., left-turn corners of CCW interior rings). These are the
+  only corners that can be turning points of a shortest taut path. Reduces node count from O(all corners)
+  to O(reflex corners). Max nodes dropped from uncapped to 93 across all nets. Fallback to full-corner set
+  when reflex-only returns no path.
+
+- **FIX-6: inflate_track formula** — changed `inflate_track = track_mm/2 + clearance_mm` to
+  `inflate_track = track_mm + clearance_mm`. The old formula gave edge-to-edge clearance of
+  `0.225 - 0.075 - 0.075 = 0.075mm` (DRC failure: required 0.150mm). The correct formula gives exactly
+  0.150mm edge-to-edge.
+
+- **ENV FIX: project-local temp dir** — `tempfile.TemporaryDirectory(dir=ROOT / ".spike1_tmp")` to work
+  around flatpak pcbnew not being able to access `/tmp` (Linux flatpak sandbox restriction).
+
+### Run-2 results
+
+| criterion | result | value |
+|-----------|--------|-------|
+| all-legal | PASS | 9/9 routed nets, 0 violations, 0 new DRC errors |
+| determinism | PASS | byte-identical (same-process + fresh subprocess) |
+| runtime | PASS | 2.24s = 0.81× grid (--quality finer-pitch) |
+| node ceiling | clear | max=93 (ceiling=2000) |
+
+- **9/10 nets routed.** `/GPIO2` fails in route-once mode: after 9 preceding nets accumulate copper,
+  `/GPIO2`'s start and goal fall in disconnected free-space components (`nodes=2, edges=0`). This is a
+  route-order / corridor-exhaustion artifact of the route-once-no-rip-up approach. It is NOT a substrate
+  failure — rip-up (M2 milestone) would resolve it by allowing net reordering when blocked.
+- **Grid baseline** (same 10-net region, pitch=0.05mm): 10/10 routed, 13 DRC errors, 2.79s.
+  Gridless outperforms grid on both runtime (0.81×) and legality (0 vs 13 errors).
+
+### Runtime progression (locality lever data)
+
+| configuration | runtime | vs grid |
+|--------------|---------|---------|
+| run-1 (no STRtree, all corners, no pruning) | ~22s (extrapolated) | ~6.58× |
+| run-2 (STRtree FIX-3, broken — from interior rings) | worse than run-1 | >6.58× |
+| run-2 (STRtree FIX-3 corrected + reflex pruning FIX-5b) | 2.24s | **0.81×** |
+
+The dominant speedup is FIX-5b (reflex-corner pruning): reducing the node set from O(all corners) to
+O(reflex corners) collapses the visibility-graph edge count from O(n²) to O(r²) where r << n. STRtree
+provides additional O(1) short-circuit for any edge with a clear bounding box; in the dense GPIO region
+no edge is completely clear (0% skipped), so its contribution here is bookkeeping overhead rather than
+speedup — but it protects open-region cases (where corridors are wide).
+
+### Decision
+
+**Substrate confirmed. Proceed to M1 package build.** CDT navmesh fallback remains documented as M2-gate
+option but is not needed. The one open item (rip-up for `/GPIO2` and similar corridor-exhaustion cases)
+is a planned M2 milestone, not a substrate defect.

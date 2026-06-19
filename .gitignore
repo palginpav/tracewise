@@ -12,3 +12,4 @@ dist/
 .env
 *.log
 runs/
+.spike1_tmp/
