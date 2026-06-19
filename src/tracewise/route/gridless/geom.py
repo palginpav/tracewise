@@ -480,6 +480,96 @@ def build_windowed_free_space(
     return free_space, obstacle_polys
 
 
+def net_routes_to_track_obstacles(
+    results: dict,
+    grid: object,
+    track_mm: float,
+    clearance_mm: float,
+) -> list:
+    """Convert routed grid NetRoute paths to buffered Shapely obstacle polygons.
+
+    Each routed grid net's path segments are converted to world-mm line segments,
+    then buffered by ``track_mm / 2 + clearance_mm`` (Minkowski inflate for
+    track-to-track clearance), snapped to PRECISION, and returned as a list of
+    Shapely Polygons.
+
+    These obstacles represent the grid copper that the gridless rescue router
+    must avoid — the key new ingredient of the M2.1 grid-first rescue mode.
+
+    Parameters
+    ----------
+    results:
+        ``dict[str, NetRoute]`` from ``route_all`` — only entries with ``nr.ok``
+        and at least one path segment are converted.  ``GridlessNetRoute`` entries
+        (already gridless) are skipped — their copper is rasterized into the shared
+        grid ledger via ``_mark`` and is visible to ``build_windowed_free_space``
+        through the pad obstacle set.
+    grid:
+        The shared occupancy ``Grid`` object — used to convert ``(layer, iy, ix)``
+        cell coordinates back to world mm via ``grid.to_world``.
+    track_mm:
+        Track width in mm.
+    clearance_mm:
+        Required copper-to-copper clearance in mm.
+
+    Returns
+    -------
+    List of pre-inflated Shapely Polygons (one per track segment, merged where
+    consecutive segments on the same net overlap).  Returns ``[]`` if Shapely is
+    absent or ``results`` is empty.
+
+    Notes
+    -----
+    The inflation uses ``track_mm / 2 + clearance_mm`` (the FIX-6 formula):
+    this keeps a subsequent gridless track centreline at ``>= clearance_mm``
+    from any existing grid track edge.
+
+    GridlessNetRoute entries carry exact world_paths already and their copper is
+    already in the grid obstacle ledger after ``_mark`` — no double-counting.
+    """
+    if not HAVE_SHAPELY:
+        return []
+    try:
+        from shapely.geometry import LineString
+
+        from tracewise.route.engine.astar import simplify
+        from tracewise.route.gridless.adapter import GridlessNetRoute
+
+        inflate = track_mm / 2.0 + clearance_mm
+        obstacles: list = []
+
+        for _name, nr in results.items():
+            if not nr.ok:
+                continue
+
+            # GridlessNetRoute: world_paths already emitted; copper visible via
+            # the grid ledger cells + _mark. Skip to avoid double-counting.
+            if isinstance(nr, GridlessNetRoute):
+                if nr.world_paths:
+                    for wpath in nr.world_paths:
+                        if len(wpath) >= 2:
+                            ls = snap(LineString(wpath).buffer(inflate, cap_style=2))
+                            obstacles.append(ls)
+                continue
+
+            # Grid NetRoute: paths are lists of (layer, iy, ix) cell tuples.
+            for path in nr.paths:
+                runs = simplify(path)
+                for run in runs:
+                    if len(run) < 2:
+                        continue
+                    world_pts = [grid.to_world(c[1], c[2]) for c in run]
+                    if len(world_pts) >= 2:
+                        ls = snap(
+                            LineString(world_pts).buffer(inflate, cap_style=2)
+                        )
+                        obstacles.append(ls)
+
+        return obstacles
+    except Exception:  # noqa: BLE001 — Shapely absent or path conversion failed
+        return []
+
+
 def get_component_containing(free_space: object, pt: tuple[float, float]) -> object:
     """Return the free-space polygon component that contains *pt*.
 

@@ -1057,3 +1057,30 @@ gridless subset = QSPI_SD0/SD1/SD3, D2-A, D2-K, J2-CC1):**
 **Open (separate, next):** corridor-blocking — gridless copper can block grid nets (staged one-way
 barrier); 3/6 subset nets failed on tight geometry. The board still improved net-net, but full
 relief needs cross-substrate awareness or smarter subset selection (M2.1 / folds toward M3 vias).
+
+---
+
+## M2.1 — grid-first gridless rescue (2026-06-19): mechanism built; NO-OP on mitayi (relief ceiling reached)
+
+Fixed the staged one-way barrier: `gridless_rescue=True` routes the GRID first, then rescues the
+nets grid leaves unconnected via the negotiated gridless mechanism, with **grid track copper ingested
+as obstacles** (`geom.net_routes_to_track_obstacles`: buffer grid centerlines by track_hw+clearance)
+so gridless routes in the real gaps and cannot block grid. Deterministic; `gridless_rescue=False`
+byte-identical to current; 356 tests green.
+
+**Result on mitayi: ZERO nets rescued — and that is the correct, honest outcome.** The rescue
+classifier found NO rescuable candidates: of the grid's unconnected failures, **4 are 2-pin F.Cu but
+geometry-blocked** (QSPI_SCLK/SD1/SD2, USB-DM — min window ~92% of board diagonal → genuinely need
+vias/B.Cu), and **~20 are multi-pin or multi-layer** (GPIO buses, power, SWCLK — outside the Phase-1
+2-pin-F.Cu gridless scope). So the board is unchanged (no relief, no regression).
+
+**Conclusion — the 2-layer single-F.Cu gridless relief ceiling on mitayi is REACHED.** Further
+connectivity gains require **M3 (vias / B.Cu + multi-pin nets)**. The rescue mechanism + grid-track
+obstacle ingestion built here are correct **M3 infrastructure** (they'll have candidates to rescue
+once vias open the geometry-blocked nets and multi-pin support lands).
+
+**Baseline note (record):** the verified grid-only mitayi baseline (route_board_engine defaults +
+run_drc, severity==error) is **48 unconnected / 89 errors with 0 copper_edge_clearance** (3×
+independently confirmed, incl. `scripts/_verify_m2_gate.py`). Some ad-hoc measure scripts reported
+50/204 with copper_edge_clearance=120/text_height/lib_footprint_issues — that is a DRC-counting/
+invocation discrepancy in those scripts, NOT the routing; `_verify_m2_gate.py` is the canonical method.

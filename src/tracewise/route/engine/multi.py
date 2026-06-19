@@ -239,6 +239,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               gridless_nets: set[str] | None = None,
               gridless_kwargs: dict | None = None,
               gridless_negotiate: bool = False,
+              gridless_rescue: bool = False,
               **_legacy) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
@@ -275,8 +276,24 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     Geometry-blocked gridless nets are reported as failed with reason
     ``"geometry-blocked (M3)"`` and do NOT enter the grid rip-up loop.
 
+    `gridless_rescue` (default ``False``) enables the M2.1 grid-first rescue mode.
+    When ``True`` and ``gridless_kwargs`` is provided:
+      1. Route ALL nets via the grid rip-up loop first (unchanged).
+      2. Collect the nets left UNCONNECTED by the grid: filter to 2-pin F.Cu
+         candidates that are not geometry-blocked (``>50%`` board-diagonal
+         quarantine from ``route_gridless_set``'s pre-classification).
+      3. Route those candidates via ``route_gridless_set`` with ALL existing copper
+         as obstacles: pads + board edge + drill holes (already modeled) PLUS the
+         emitted grid track segments (the key new piece: each grid track centreline
+         buffered by ``track_mm/2 + clearance_mm`` via
+         ``net_routes_to_track_obstacles``).
+      4. Successfully rescued gridless nets replace their failed grid entries and
+         their copper is rasterized into the shared grid ledger.
+    Distinct from ``gridless_negotiate`` (M2 pre-route mode); both can coexist.
+
     Hard invariant: ``gridless_nets=None`` or empty (regardless of
-    ``gridless_negotiate``) → behaviour is byte-identical to the pre-M2 engine."""
+    ``gridless_negotiate``) → behaviour is byte-identical to the pre-M2 engine.
+    ``gridless_rescue=False`` (default) → byte-identical to current behaviour."""
     if _legacy:
         # Silently accept (and ignore) the removed `time_budget_s` keyword so
         # callers that still pass it do not crash immediately.  Emit a warning
@@ -445,4 +462,111 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
             if pnr.ok and pnr.paths:
                 _mark(grid, pnr, 1)
                 results[name] = pnr
+
+    # ------------------------------------------------------------------
+    # M2.1 GRIDLESS RESCUE: route grid failures via gridless, with ALL
+    # existing copper (grid tracks + pads + board edge + drills) as
+    # obstacles.  Runs AFTER the grid pass + salvage pass so gridless
+    # routes in the REAL gaps around grid copper.
+    #
+    # Hard invariant: gridless_rescue=False (default) → no-op, results
+    # unchanged, byte-identical to pre-M2.1 behaviour.
+    # ------------------------------------------------------------------
+    if gridless_rescue and gridless_kwargs:
+        from tracewise.route.gridless.adapter import to_gridless_netroute
+        from tracewise.route.gridless.geom import (
+            HAVE_SHAPELY,
+            net_routes_to_track_obstacles,
+        )
+        from tracewise.route.gridless.negotiate import route_gridless_set
+
+        if HAVE_SHAPELY:
+            gk = gridless_kwargs
+            pads = gk.get("pads")
+            geo = gk.get("geo")
+            board_bbox = gk.get("board_bbox")
+            anchors = gk.get("anchors")
+            neg_board_outline = gk.get("board_outline")
+            neg_drill_obstacles = gk.get("drill_obstacles")
+            neg_geom_threshold = gk.get("negotiate_geom_block_threshold", 0.5)
+            neg_ripup_factor = gk.get("negotiate_ripup_factor", ripup_factor)
+            neg_history_factor = gk.get("negotiate_history_factor", 3.0)
+            neg_window_mm = gk.get("negotiate_window_mm", 4.0)
+
+            if pads is not None and geo is not None and board_bbox is not None:
+                by_name_all = {n.name: n for n in nets}
+
+                # --- Identify rescue candidates ---
+                # 2-pin F.Cu nets that the grid left unconnected.
+                # Uses sorted() for determinism.
+                rescue_candidates = []
+                for net_name in sorted(results):
+                    nr = results[net_name]
+                    if nr.ok:
+                        continue
+                    net = by_name_all.get(net_name)
+                    if net is None:
+                        continue
+                    # Only 2-pin nets (Phase 1 gridless is 2-pin only)
+                    if len(net.pads) != 2:
+                        continue
+                    # Only F.Cu pads (layer 0)
+                    if not all(p[0] == 0 for p in net.pads):
+                        continue
+                    # Resolve world-mm pad coords
+                    pad_a_cell = net.pads[0]
+                    pad_b_cell = net.pads[1]
+                    pad_a = grid.to_world(pad_a_cell[1], pad_a_cell[2])
+                    pad_b = grid.to_world(pad_b_cell[1], pad_b_cell[2])
+                    if anchors is not None:
+                        pad_a = anchors.get(pad_a_cell, pad_a)
+                        pad_b = anchors.get(pad_b_cell, pad_b)
+                    rescue_candidates.append({
+                        "net_name": net_name,
+                        "pad_a": pad_a,
+                        "pad_b": pad_b,
+                    })
+
+                if rescue_candidates:
+                    # Build track-segment obstacles from all successfully-routed
+                    # grid + gridless copper in results.
+                    track_obs = net_routes_to_track_obstacles(
+                        results,
+                        grid,
+                        track_mm=geo.get("track_mm", 0.2),
+                        clearance_mm=geo.get("clearance_mm", 0.2),
+                    )
+
+                    # Combine drill + track obstacles into extra_obstacles for
+                    # route_gridless_set (passed via board_outline + drill_obstacles
+                    # params that go through to _route_one_net_congestion →
+                    # build_windowed_free_space).  Track obstacles are Shapely
+                    # polys already inflated — add them to drill_obstacles list
+                    # so build_windowed_free_space picks them up uniformly.
+                    combined_drill_obs = list(neg_drill_obstacles or []) + track_obs
+
+                    rescue_results = route_gridless_set(
+                        net_set=rescue_candidates,
+                        pads=pads,
+                        geo=geo,
+                        board_bbox=board_bbox,
+                        anchors=anchors,
+                        history_factor=neg_history_factor,
+                        ripup_factor=neg_ripup_factor,
+                        window_mm_start=neg_window_mm,
+                        geom_block_threshold=neg_geom_threshold,
+                        board_outline=neg_board_outline,
+                        drill_obstacles=combined_drill_obs,
+                    )
+
+                    for net_name, neg_res in rescue_results.items():
+                        net = by_name_all.get(net_name)
+                        if net is None:
+                            continue
+                        if neg_res.ok and neg_res.world_paths:
+                            nr = to_gridless_netroute(net, neg_res.world_paths, grid)
+                            _mark(grid, nr, 1)
+                            results[net_name] = nr
+                        # Geometry-blocked or failed: leave existing failure entry
+
     return results

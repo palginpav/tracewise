@@ -384,7 +384,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        salvage_escape: int = 0,
                        nudge_vias: bool = False,
                        gridless_nets: set[str] | None = None,
-                       gridless_negotiate: bool = False) -> dict:
+                       gridless_negotiate: bool = False,
+                       gridless_rescue: bool = False) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -422,7 +423,15 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     handles the whole gridless set internally (congestion history + bounded
     rip-up among the gridless nets), then their copper is rasterized into the
     shared grid ledger before the grid pass runs.  Ignored when
-    ``gridless_nets`` is ``None`` or empty."""
+    ``gridless_nets`` is ``None`` or empty.
+
+    `gridless_rescue` (default ``False``) enables M2.1 grid-first rescue mode:
+    route ALL nets via the grid first, then identify grid failures that are
+    2-pin F.Cu non-geometry-blocked candidates, and attempt to route them via
+    the gridless engine with ALL existing copper (grid tracks + pads + board
+    edge + drill holes) as obstacles.  Gridless routes in the real gaps around
+    grid copper and cannot block grid nets.  Does not require ``gridless_nets``.
+    ``gridless_rescue=False`` (default) is byte-identical to current behaviour."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors, obstacles, anchor_rects = build_problem(
@@ -441,12 +450,13 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     # that accumulates Shapely obstacles for subsequent gridless nets.
     # board_outline and drill_obstacles extend the obstacle model to prevent
     # copper_edge_clearance and drill-clearance DRC violations.
+    # Also built for gridless_rescue mode even when gridless_nets is None.
     gridless_kwargs: dict | None = None
-    if gridless_nets:
+    if gridless_nets or gridless_rescue:
         from tracewise.route.gridless.geom import HAVE_SHAPELY
         if not HAVE_SHAPELY:
             raise ImportError(
-                "gridless_nets requires shapely>=2.0; "
+                "gridless_nets/gridless_rescue requires shapely>=2.0; "
                 "pip install tracewise[gridless]"
             )
         from tracewise.route.gridless.geom import (
@@ -485,7 +495,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                             salvage_escape=salvage_escape,
                             gridless_nets=gridless_nets,
                             gridless_kwargs=gridless_kwargs,
-                            gridless_negotiate=gridless_negotiate)
+                            gridless_negotiate=gridless_negotiate,
+                            gridless_rescue=gridless_rescue)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"],
