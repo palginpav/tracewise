@@ -988,3 +988,34 @@ speedup — but it protects open-region cases (where corridors are wide).
 **Substrate confirmed. Proceed to M1 package build.** CDT navmesh fallback remains documented as M2-gate
 option but is not needed. The one open item (rip-up for `/GPIO2` and similar corridor-exhaustion cases)
 is a planned M2 milestone, not a substrate defect.
+
+---
+
+## M2 SPIKE (2026-06-19) — negotiation mechanism GO; RUNTIME is the open question
+
+`scripts/spike2_run2_congestion_ripup.py` (run-2; run-1 superseded). Congestion-history pricing +
+bounded rip-up on the visibility-graph substrate, on the mitayi RP2040 GPIO fan-out (10 nets).
+
+**Correctness gate (M2 milestone) — MET:**
+- **10/10 routed** vs fixed-order 9/10 — **NO regression, +1 relief** (`/GPIO2` now routes).
+- 0 new trace-attributable DRC errors (real kicad DRC); **0 board-scale escalations**.
+- Byte-identical deterministic (same-process + subprocess); rip-up **converges** (17/80 rounds).
+- Mechanism: 0.5mm super-cell history field, edge cost = length × (1 + history_factor·history[cell]);
+  victim = most-overlapping routed net; cycle-breaking via pair-specific escalation protection +
+  a thrash guard (3 initiations); geometry-blocked nets (>50% board-diagonal pad-only) quarantined
+  as M3 (B.Cu/via) candidates rather than board-scale-escalated.
+
+**The one caveat — RUNTIME 7.94× grid** (target ≤3×; improved from run-1's 10.03×). Root cause: 17
+rip-up/escalation routes build 200–292-node visibility graphs at 8–16mm windows, and the
+visibility-graph **O(n²) edge-build is inherent to the substrate** at wide windows. The midpoint-blocked
+edge pre-filter helped (10×→7.94×) but did not reach 3×.
+
+**Decision needed (substrate-scaling fork, architect-level):** the M2 correctness mechanism is proven,
+but the runtime at contention scale revives the survey's original O(n²) concern about visibility graphs.
+Options before the M2 PRODUCTION integration into `route_all`:
+- (a) Accept 7.94× and integrate (gridless used for a bounded set of nets; full-board stays grid) — fine
+  for staged adoption, slow for all-gridless.
+- (b) Push visibility-graph runtime harder: stronger angular-sweep / reduced taut-string corner set /
+  incremental graph reuse across rip-up rounds.
+- (c) Re-evaluate the **CDT navmesh** substrate (survey runner-up) — triangulation avoids O(n²) edge
+  build and was always the scale fallback; this is the natural point to weigh it, before M3.
