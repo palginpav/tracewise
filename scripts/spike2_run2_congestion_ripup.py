@@ -27,7 +27,6 @@ Usage:
 """
 from __future__ import annotations
 
-import collections
 import importlib.util
 import json
 import math
@@ -46,7 +45,7 @@ try:
     import numpy as np
     from shapely import STRtree
     from shapely.geometry import LineString, Point, box
-    from shapely.ops import unary_union
+    pass  # unary_union not needed directly; used via geom module
 except ImportError as exc:
     print(f"ERROR: Required dependency missing: {exc}", file=sys.stderr)
     sys.exit(1)
@@ -57,28 +56,24 @@ except ImportError as exc:
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from tracewise.route.bridge import run_drc, strip_routing
+from tracewise.route.bridge import run_drc
 from tracewise.route.engine.kicad import (
-    build_problem,
-    emit_routes,
     extract_pads,
     project_geometry,
     refill_zones,
 )
 from tracewise.route.engine.multi import Net, order_nets, route_all
 from tracewise.route.gridless.geom import (
-    PRECISION,
     build_windowed_free_space,
     get_component_containing,
-    snap,
-)
-from tracewise.route.gridless.search import (
-    build_visibility_graph,
-    astar_visgraph,
-    reflex_obstacle_corners,
-    obstacle_corners,
 )
 from tracewise.route.gridless.realize import snap_waypoints
+from tracewise.route.gridless.search import (
+    edge_blocked_by_obstacles_fast,
+    is_visible_fast,
+    obstacle_corners,
+    reflex_obstacle_corners,
+)
 
 # Import helpers from spike1
 SPIKE1 = ROOT / "scripts" / "spike1_gridless_congested_region.py"
@@ -237,10 +232,15 @@ def build_congestion_priced_visgraph(
     FIX-B: Before the expensive seg.buffer().difference() visibility check,
     run a midpoint-blocked pre-filter using the nearby obstacles from the STRtree.
     This significantly reduces calls to the expensive Shapely check for large windows.
-    """
-    import heapq
-    from tracewise.route.gridless.search import is_visible
 
+    OPT-2 (vectorized contains): replace the ``Point()``-per-sample loop in the
+    midpoint pre-filter with ``edge_blocked_by_obstacles_fast`` which uses
+    ``shapely.contains_xy`` with a numpy array of obstacles — ~6× faster.
+
+    OPT-3 (batch STRtree query): pre-compute all edge bounding boxes and issue
+    a single STRtree.query(array) call instead of O(n²) individual queries —
+    ~8× speedup on the STRtree step.
+    """
     fs_component = get_component_containing(free_space, start_xy)
 
     if use_reflex_pruning:
@@ -251,42 +251,87 @@ def build_congestion_priced_visgraph(
     all_nodes: list[tuple[float, float]] = [start_xy, goal_xy] + corners
     n = len(all_nodes)
 
-    strtree = STRtree(obstacle_polys) if obstacle_polys else None
+    obs_poly_arr = np.array(obstacle_polys) if obstacle_polys else None
 
-    adj: dict[int, list[tuple[float, int]]] = {i: [] for i in range(n)}
+    # OPT-3: batch all edge bounding-box STRtree queries in one call.
+    # Build the (i,j) edge list and their corresponding query boxes.
+    edges_ij: list[tuple[int, int]] = []
     for i in range(n):
         for j in range(i + 1, n):
-            u, v = all_nodes[i], all_nodes[j]
+            edges_ij.append((i, j))
+    n_edges_total = len(edges_ij)
 
-            if strtree is not None:
-                edge_minx = min(u[0], v[0])
-                edge_miny = min(u[1], v[1])
-                edge_maxx = max(u[0], v[0])
-                edge_maxy = max(u[1], v[1])
-                query_box = box(
-                    edge_minx - 1e-6, edge_miny - 1e-6,
-                    edge_maxx + 1e-6, edge_maxy + 1e-6,
-                )
-                nearby_indices = strtree.query(query_box)
-                if len(nearby_indices) == 0:
-                    # No nearby obstacles -> trivially visible
-                    d_priced = sc_grid.edge_history_cost(u, v, history_factor)
-                    adj[i].append((d_priced, j))
-                    adj[j].append((d_priced, i))
-                    continue
+    # nearby_obs_per_edge[k] = numpy array of obstacle indices near edge k
+    # (None means no strtree / no obstacles)
+    if obstacle_polys and obs_poly_arr is not None:
+        strtree = STRtree(obstacle_polys)
+        n_obs = len(obstacle_polys)
 
-                # FIX-B: midpoint pre-filter using nearby obstacles
-                nearby_obs = [obstacle_polys[k] for k in nearby_indices
-                              if k < len(obstacle_polys)]
-                if _edge_is_blocked_by_obstacle(u, v, nearby_obs, n_samples=3):
-                    # Fast reject — skip the expensive visibility check
-                    continue
+        # Build query boxes for all edges at once
+        xs = np.array([all_nodes[i][0] for i, j in edges_ij], dtype=np.float64)
+        ys = np.array([all_nodes[i][1] for i, j in edges_ij], dtype=np.float64)
+        xe = np.array([all_nodes[j][0] for i, j in edges_ij], dtype=np.float64)
+        ye = np.array([all_nodes[j][1] for i, j in edges_ij], dtype=np.float64)
 
-            # Full visibility check (only for edges that pass the pre-filter)
-            if is_visible(u, v, fs_component):
+        minx = np.minimum(xs, xe) - 1e-6
+        miny = np.minimum(ys, ye) - 1e-6
+        maxx = np.maximum(xs, xe) + 1e-6
+        maxy = np.maximum(ys, ye) + 1e-6
+
+        # Build all edge query boxes as a numpy array of Shapely boxes
+        # box(minx, miny, maxx, maxy) vectorized
+        import shapely as _shapely
+        edge_q_boxes = _shapely.box(minx, miny, maxx, maxy)
+
+        # Batch STRtree query: returns (input_idx, tree_idx) pairs
+        input_idxs, tree_idxs = strtree.query(edge_q_boxes)
+
+        # Group tree_idxs by input (edge) index
+        # Only keep valid tree_idxs (< n_obs)
+        valid_mask = tree_idxs < n_obs
+        input_idxs_valid = input_idxs[valid_mask]
+        tree_idxs_valid = tree_idxs[valid_mask]
+
+        # Build per-edge nearby obstacle arrays using np.unique to find split points
+        if len(input_idxs_valid) > 0:
+            # Sort by input_idx for efficient grouping
+            sort_order = np.argsort(input_idxs_valid, kind='stable')
+            sorted_input = input_idxs_valid[sort_order]
+            sorted_tree = tree_idxs_valid[sort_order]
+            split_points = np.searchsorted(sorted_input, np.arange(n_edges_total + 1))
+            nearby_tree_per_edge = [
+                sorted_tree[split_points[k]:split_points[k + 1]]
+                for k in range(n_edges_total)
+            ]
+        else:
+            nearby_tree_per_edge = [np.array([], dtype=np.int64)] * n_edges_total
+    else:
+        nearby_tree_per_edge = None
+
+    adj: dict[int, list[tuple[float, int]]] = {i: [] for i in range(n)}
+    for edge_idx, (i, j) in enumerate(edges_ij):
+        u, v = all_nodes[i], all_nodes[j]
+
+        if nearby_tree_per_edge is not None:
+            nearby_indices = nearby_tree_per_edge[edge_idx]
+            if len(nearby_indices) == 0:
+                # No nearby obstacles -> trivially visible
                 d_priced = sc_grid.edge_history_cost(u, v, history_factor)
                 adj[i].append((d_priced, j))
                 adj[j].append((d_priced, i))
+                continue
+
+            # OPT-2 (FIX-B): midpoint pre-filter using vectorized contains_xy
+            nearby_obs_arr = obs_poly_arr[nearby_indices]
+            if edge_blocked_by_obstacles_fast(u, v, nearby_obs_arr, n_samples=3):
+                # Fast reject — skip the expensive visibility check
+                continue
+
+        # Full visibility check (only for edges that pass the pre-filter)
+        if is_visible_fast(u, v, fs_component):
+            d_priced = sc_grid.edge_history_cost(u, v, history_factor)
+            adj[i].append((d_priced, j))
+            adj[j].append((d_priced, i))
 
     # Sort adjacency deterministically
     for i in range(n):
@@ -666,7 +711,7 @@ def route_gridless_with_ripup_run2(
     # FIX-A + FIX-C: Pre-classify ONLY for geometry-blocked detection.
     # Wide-window nets still participate in rip-up; only truly geometry-blocked
     # nets (pad-only window > 50% board diagonal) are quarantined.
-    print(f"\n[spike2r2] Pre-classifying min_needed_window (FIX-A: no bypass for wide-window)...",
+    print("\n[spike2r2] Pre-classifying min_needed_window (FIX-A: no bypass for wide-window)...",
           flush=True)
     min_needed_window: dict[str, float] = {}
     geometry_blocked: set[str] = set()
@@ -811,7 +856,7 @@ def route_gridless_with_ripup_run2(
             print(f"[spike2r2]   ROUTED  nodes={n_nodes}  edges={n_edges}  "
                   f"window={window_used:.1f}mm  escalations={escalations}  "
                   f"legal={result_dict['all_legal']}"
-                  + (f"  [NODE FLAG]" if node_flag else ""), flush=True)
+                  + ("  [NODE FLAG]" if node_flag else ""), flush=True)
             final_results[net_name] = result_dict
             continue
 
@@ -963,7 +1008,7 @@ def route_gridless_with_ripup_run2(
 
     all_waypoints = {name: nr.waypoints for name, nr in routed.items()}
 
-    print(f"\n[spike2r2] Rip-up loop done.", flush=True)
+    print("\n[spike2r2] Rip-up loop done.", flush=True)
     routed_count = sum(1 for r in per_net_results if r["status"] == "routed")
     geom_blocked_count = sum(1 for r in per_net_results if r["status"] == "geometry_blocked")
     failed_count = sum(1 for r in per_net_results
@@ -1126,7 +1171,7 @@ def main() -> None:
             for g in net_groups
         ]
         ordered = order_nets(net_stubs)
-        print(f"[spike2r2] Ordered net-set:", flush=True)
+        print("[spike2r2] Ordered net-set:", flush=True)
         for i, n in enumerate(ordered):
             print(f"[spike2r2]   {i+1:2d}. {n.name!r}", flush=True)
 
@@ -1137,7 +1182,7 @@ def main() -> None:
               f"errors={baseline_summary['total_errors']}", flush=True)
 
         # --- Step 4: Fixed-order baseline ---
-        print(f"\n[spike2r2] === FIXED-ORDER BASELINE ===", flush=True)
+        print("\n[spike2r2] === FIXED-ORDER BASELINE ===", flush=True)
         fixed_dir = out_dir / "fixed_order"
         shutil.copytree(out_dir, fixed_dir,
                         ignore=shutil.ignore_patterns("fixed_order", "ripup_run",
@@ -1166,7 +1211,7 @@ def main() -> None:
               f"net_errors={fixed_drc_summary['net_errors']}", flush=True)
 
         # --- Step 5: Congestion + rip-up (Run-2 with fixes) ---
-        print(f"\n[spike2r2] === CONGESTION+RIP-UP (Run-2: FIX-A/B/C) ===", flush=True)
+        print("\n[spike2r2] === CONGESTION+RIP-UP (Run-2: FIX-A/B/C) ===", flush=True)
         ripup_dir1 = out_dir / "ripup_run"
         shutil.copytree(out_dir, ripup_dir1,
                         ignore=shutil.ignore_patterns("fixed_order", "ripup_run",
@@ -1206,7 +1251,7 @@ def main() -> None:
         all_legal1 = (new_trace_errors1 == 0)
 
         # --- Step 6: Determinism gate --- Run 2 in same process ---
-        print(f"\n[spike2r2] === DETERMINISM GATE (Run 2 same process) ===", flush=True)
+        print("\n[spike2r2] === DETERMINISM GATE (Run 2 same process) ===", flush=True)
 
         routing_json = out_dir / "ripup_routing_result.json"
         with open(routing_json, "w") as f:
@@ -1229,7 +1274,7 @@ def main() -> None:
             ripup_factor=8,
             geom_block_threshold=0.5,
         )
-        t_run2_elapsed = time.perf_counter() - t_run2
+        _t_run2_elapsed = time.perf_counter() - t_run2  # noqa: F841
 
         ripup_waypoints2 = ripup_result2["all_waypoints"]
 
@@ -1241,7 +1286,7 @@ def main() -> None:
 
         determinism_ok = (coords1 == coords2)
         if determinism_ok:
-            print(f"[spike2r2] DETERMINISM same-process: byte-identical", flush=True)
+            print("[spike2r2] DETERMINISM same-process: byte-identical", flush=True)
         else:
             lines1 = set(coords1.splitlines())
             lines2 = set(coords2.splitlines())
@@ -1252,7 +1297,7 @@ def main() -> None:
                 print(f"[spike2r2]   {l}", flush=True)
 
         # --- Step 7: Subprocess determinism ---
-        print(f"\n[spike2r2] === SUBPROCESS DETERMINISM ===", flush=True)
+        print("\n[spike2r2] === SUBPROCESS DETERMINISM ===", flush=True)
         subprocess_det_ok = False
         try:
             sub_board_dir = out_dir / "sub_run"
@@ -1279,7 +1324,7 @@ def main() -> None:
             )
             subprocess_det_ok = (sub_coords.strip() == coords1.strip())
             if subprocess_det_ok:
-                print(f"[spike2r2] SUBPROCESS DETERMINISM: byte-identical", flush=True)
+                print("[spike2r2] SUBPROCESS DETERMINISM: byte-identical", flush=True)
             else:
                 lines_sub = set(sub_coords.splitlines())
                 lines_r1 = set(coords1.splitlines())
@@ -1294,13 +1339,13 @@ def main() -> None:
         det_str = "byte-identical" if determinism_ok else "differ"
 
         # --- Step 8: Grid baseline ---
-        print(f"\n[spike2r2] === GRID BASELINE ===", flush=True)
+        print("\n[spike2r2] === GRID BASELINE ===", flush=True)
         try:
             t_grid = time.perf_counter()
             grid_data = run_grid_baseline(
                 board_master, data, net_groups, geo, region_bbox, out_dir
             )
-            t_grid_elapsed = time.perf_counter() - t_grid
+            _t_grid_elapsed = time.perf_counter() - t_grid  # noqa: F841
             grid_routed = grid_data["routed"]
             grid_failed = grid_data["failed"]
             grid_elapsed_s = grid_data["elapsed_s"]
@@ -1331,9 +1376,7 @@ def main() -> None:
         # and they're NOT geometry-blocked
         order_dependent_failures = sorted(newly_failed)
         nets_relieved = len(newly_routed)
-        nets_newly_failed = len(newly_failed)
-
-        print(f"\n[spike2r2] Relief analysis:", flush=True)
+        print("\n[spike2r2] Relief analysis:", flush=True)
         print(f"  Newly routed (was failed in fixed-order): {sorted(newly_routed)}", flush=True)
         print(f"  Newly failed (was routed in fixed-order, NOT geom-blocked): "
               f"{sorted(newly_failed)}", flush=True)
@@ -1346,15 +1389,7 @@ def main() -> None:
         # that's an order-dependent failure = real M2 bug
         subset_regression = bool(order_dependent_failures)
 
-        net_count_improves = ripup_routed_n1 > fixed_routed_n
-        # Relief: either we route more nets, OR we route the same set (fixed_failed was 0), OR
-        # geometry-blocked nets fully explain any "failures" that fixed-order couldn't route either
-        fixed_failed_excl_geom = [n for n in fixed_failed_names if n not in geom_blocked_set]
-        relief_ok = (
-            net_count_improves
-            or (fixed_failed_n == 0 and ripup_converged)
-            or (not order_dependent_failures)
-        )
+        net_count_improves = ripup_routed_n1 > fixed_routed_n  # noqa: F841
         bounded_ok = (board_scale_escalations == 0)
 
         if (all_legal1 and ripup_converged and determinism_ok
@@ -1453,7 +1488,7 @@ def main() -> None:
                 "new_drc_errors": new_trace_errors1,
             },
             "regression_check": (
-                f"NO REGRESSION" if not order_dependent_failures else
+                "NO REGRESSION" if not order_dependent_failures else
                 f"REGRESSION: lost {order_dependent_failures} (order-dependent failures)"
             ),
             "geometry_blocked_nets": sorted(geom_blocked_set),

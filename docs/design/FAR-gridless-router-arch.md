@@ -1019,3 +1019,14 @@ Options before the M2 PRODUCTION integration into `route_all`:
   incremental graph reuse across rip-up rounds.
 - (c) Re-evaluate the **CDT navmesh** substrate (survey runner-up) — triangulation avoids O(n²) edge
   build and was always the scale fallback; this is the natural point to weigh it, before M3.
+
+### M2 runtime caveat RESOLVED (2026-06-19) — 7.94× → 2.69× grid
+
+Optimized the visibility-graph edge-build (option (b), no substrate change). The fix was vectorizing
+the hot path in the PRODUCTION `search.py` `build_visibility_graph` (so M1 benefits too):
+- vectorized `shapely.contains_xy` midpoint pre-filter (replaces per-point `Point` creates);
+- single batched `STRtree.query` over all candidate edges (replaces O(n²) per-edge queries).
+Result: M2 spike runtime **2.69× grid `--quality`** (≤3× target MET), with ALL invariants preserved —
+10/10 routed, 0 new DRC errors, 0 board-scale escalations, byte-identical determinism, rip-up converges,
+312 tests green. The CDT-navmesh fallback is NOT needed for this scale. M2 spike-level work (mechanism +
+runtime) is GO; next is the M2 production integration of congestion+rip-up into `route_all`.

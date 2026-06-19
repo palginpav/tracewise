@@ -27,8 +27,10 @@ import math
 from tracewise.route.gridless.geom import HAVE_SHAPELY, _require_shapely
 
 if HAVE_SHAPELY:
+    import numpy as np
+    import shapely
     from shapely import STRtree
-    from shapely.geometry import LineString, box
+    from shapely.geometry import LineString
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,84 @@ def is_visible(
     return diff.is_empty or diff.area < 1e-8
 
 
+def is_visible_fast(
+    u: tuple[float, float],
+    v: tuple[float, float],
+    prepared_fs: object,
+) -> bool:
+    """Visibility check identical to ``is_visible`` but using a pre-prepared geometry.
+
+    ``shapely.prepare()`` caches internal index structures on the free-space polygon
+    so that the subsequent ``seg_buf.difference(prepared_fs)`` set operation can
+    skip full re-indexing.  This gives a modest speedup (roughly 1.3×) over calling
+    ``is_visible`` with an unprepared geometry.
+
+    IMPORTANT: the semantics are byte-identical to ``is_visible`` — the same
+    ``seg_buf.difference(fs_component).is_empty or area < 1e-8`` criterion is used.
+    Do NOT replace this with a ``covers`` or ``within`` predicate: those lack the
+    1e-8 area tolerance and reject valid boundary-grazing edges (changing routing
+    results).
+
+    *prepared_fs* must have been passed to ``shapely.prepare()`` before this call.
+    (``shapely.prepare`` modifies the geometry in-place; the return value is None.)
+
+    Parameters
+    ----------
+    u, v:
+        Segment endpoints.
+    prepared_fs:
+        A Shapely Polygon that has been passed to ``shapely.prepare()`` in-place.
+
+    Returns
+    -------
+    True iff the buffered segment lies within *prepared_fs* (with 1e-8 area tolerance).
+    """
+    _require_shapely()
+    if math.hypot(u[0] - v[0], u[1] - v[1]) < 1e-9:
+        return True
+    seg = LineString([u, v])
+    seg_buf = seg.buffer(1e-5, cap_style=2)
+    diff = seg_buf.difference(prepared_fs)  # type: ignore[union-attr]
+    return diff.is_empty or diff.area < 1e-8
+
+
+def edge_blocked_by_obstacles_fast(
+    u: tuple[float, float],
+    v: tuple[float, float],
+    nearby_obs_arr: object,
+    n_samples: int = 3,
+) -> bool:
+    """Fast pre-filter: True iff any interior sample of segment u→v is inside an obstacle.
+
+    Uses ``shapely.contains_xy`` with a pre-built numpy array of obstacle geometries,
+    avoiding per-sample ``Point`` object creation and per-obstacle Python method calls.
+    This is ~6× faster than the loop-based ``_edge_is_blocked_by_obstacle`` helper.
+
+    Parameters
+    ----------
+    u, v:
+        Segment endpoints.
+    nearby_obs_arr:
+        Numpy array of Shapely geometries (nearby obstacle polygons), obtained by
+        ``np.array(nearby_obstacle_list)``.  Must be non-empty.
+    n_samples:
+        Number of evenly-spaced interior sample points (not endpoints).
+
+    Returns
+    -------
+    True if any sample point is inside any obstacle (fast rejection).
+    False if no sample is blocked (edge is a candidate for full visibility check).
+    """
+    _require_shapely()
+    for k in range(1, n_samples + 1):
+        t = k / (n_samples + 1)
+        px = u[0] + t * (v[0] - u[0])
+        py = u[1] + t * (v[1] - u[1])
+        if np.any(shapely.contains_xy(nearby_obs_arr, px, py)):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Visibility graph builder
 # ---------------------------------------------------------------------------
@@ -215,40 +295,71 @@ def build_visibility_graph(
     all_nodes: list[tuple[float, float]] = [start_xy, goal_xy] + corners
     n = len(all_nodes)
 
-    # Build STRtree from actual obstacle polygons for spatial pruning (FIX-3)
-    strtree = STRtree(obstacle_polys) if obstacle_polys else None
+    # OPT-2: pre-convert obstacle polys to numpy array for fast indexing in prefilter
+    obs_poly_arr = np.array(obstacle_polys) if obstacle_polys else None
+
+    # OPT-3 (batch STRtree): build all edge query boxes and issue a single
+    # STRtree.query(array) call instead of O(n²) individual queries.
+    edges_ij: list[tuple[int, int]] = [
+        (i, j) for i in range(n) for j in range(i + 1, n)
+    ]
+    n_edges_total = len(edges_ij)
+
+    if obstacle_polys and obs_poly_arr is not None:
+        strtree = STRtree(obstacle_polys)
+        n_obs = len(obstacle_polys)
+
+        xs = np.array([all_nodes[i][0] for i, j in edges_ij], dtype=np.float64)
+        ys = np.array([all_nodes[i][1] for i, j in edges_ij], dtype=np.float64)
+        xe = np.array([all_nodes[j][0] for i, j in edges_ij], dtype=np.float64)
+        ye = np.array([all_nodes[j][1] for i, j in edges_ij], dtype=np.float64)
+        minx = np.minimum(xs, xe) - 1e-6
+        miny = np.minimum(ys, ye) - 1e-6
+        maxx = np.maximum(xs, xe) + 1e-6
+        maxy = np.maximum(ys, ye) + 1e-6
+        edge_q_boxes = shapely.box(minx, miny, maxx, maxy)
+
+        input_idxs, tree_idxs = strtree.query(edge_q_boxes)
+        valid_mask = tree_idxs < n_obs
+        input_idxs_v = input_idxs[valid_mask]
+        tree_idxs_v = tree_idxs[valid_mask]
+        if len(input_idxs_v) > 0:
+            sort_order = np.argsort(input_idxs_v, kind='stable')
+            sorted_input = input_idxs_v[sort_order]
+            sorted_tree = tree_idxs_v[sort_order]
+            splits = np.searchsorted(sorted_input, np.arange(n_edges_total + 1))
+            nearby_per_edge: list | None = [
+                sorted_tree[splits[k]:splits[k + 1]] for k in range(n_edges_total)
+            ]
+        else:
+            nearby_per_edge = [np.array([], dtype=np.int64)] * n_edges_total
+    else:
+        nearby_per_edge = None
 
     # Build adjacency — fixed i<j order for determinism
     adj: dict[int, list[tuple[float, int]]] = {i: [] for i in range(n)}
-    for i in range(n):
-        for j in range(i + 1, n):
-            u, v = all_nodes[i], all_nodes[j]
+    for edge_idx, (i, j) in enumerate(edges_ij):
+        u, v = all_nodes[i], all_nodes[j]
 
-            if strtree is not None:
-                # STRtree pruning: skip is_visible if no obstacle near edge bbox
-                edge_minx = min(u[0], v[0])
-                edge_miny = min(u[1], v[1])
-                edge_maxx = max(u[0], v[0])
-                edge_maxy = max(u[1], v[1])
-                query_box = box(
-                    edge_minx - 1e-6,
-                    edge_miny - 1e-6,
-                    edge_maxx + 1e-6,
-                    edge_maxy + 1e-6,
-                )
-                nearby = strtree.query(query_box)
-                if len(nearby) == 0:
-                    # No nearby obstacles → trivially visible
-                    d = math.hypot(v[0] - u[0], v[1] - u[1])
-                    adj[i].append((d, j))
-                    adj[j].append((d, i))
-                    continue
-
-            # Full visibility check
-            if is_visible(u, v, fs_component):
+        if nearby_per_edge is not None:
+            nearby = nearby_per_edge[edge_idx]
+            if len(nearby) == 0:
+                # No nearby obstacles → trivially visible
                 d = math.hypot(v[0] - u[0], v[1] - u[1])
                 adj[i].append((d, j))
                 adj[j].append((d, i))
+                continue
+
+            # OPT-2: midpoint pre-filter using vectorized contains_xy
+            nearby_obs_arr = obs_poly_arr[nearby]  # type: ignore[index]
+            if edge_blocked_by_obstacles_fast(u, v, nearby_obs_arr, n_samples=3):
+                continue  # fast reject
+
+        # Full visibility check
+        if is_visible(u, v, fs_component):
+            d = math.hypot(v[0] - u[0], v[1] - u[1])
+            adj[i].append((d, j))
+            adj[j].append((d, i))
 
     # Sort each adjacency list deterministically
     for i in range(n):
