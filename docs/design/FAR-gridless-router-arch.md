@@ -1084,3 +1084,460 @@ run_drc, severity==error) is **48 unconnected / 89 errors with 0 copper_edge_cle
 independently confirmed, incl. `scripts/_verify_m2_gate.py`). Some ad-hoc measure scripts reported
 50/204 with copper_edge_clearance=120/text_height/lib_footprint_issues — that is a DRC-counting/
 invocation discrepancy in those scripts, NOT the routing; `_verify_m2_gate.py` is the canonical method.
+
+---
+
+# M3 — Vias / 2-layer (B.Cu) + multi-pin nets — ACTIVE DESIGN (2026-06-20)
+
+> **This is the active M3 design.** It supersedes the one-row M3 placeholder in the Decision-5
+> milestone table and the sketch in Decision 4 (which predates the per-layer-graph framing and the
+> #4 / M2.1 hole-aware learnings). M3 is the real connectivity unlock: M2.1 proved the
+> single-layer-F.Cu relief ceiling on mitayi is **reached** — of the grid's 48 unconnected, **4 are
+> 2-pin F.Cu but geometry-blocked** (QSPI_SCLK/SD1/SD2, USB-DM — min window ~92% of board diagonal,
+> i.e. no single-layer corridor exists) and **~20 are multi-pin/multi-layer**. Both classes need
+> M3. The `gridless_rescue` mechanism + grid-track-obstacle ingestion built in M2.1 are the M3
+> integration substrate — they finally have rescuable candidates once vias open the
+> geometry-blocked nets.
+>
+> NO production code in this doc — pseudocode only where it pins a contract. M3 ships in two phases:
+> **M3-Phase-1 = vias / 2-layer for 2-pin nets** (the Spike-M3 below proves it); **M3-Phase-2 =
+> multi-pin connection trees** (staged after Phase-1, specified here so the data model is fixed up
+> front).
+
+## M3 design question 1 — Per-layer free space + visibility graph
+
+**Decision: build the free-space polygon + visibility graph PER LAYER (F.Cu=0, B.Cu=1), each over
+its own per-layer obstacle set, inside the SAME per-net routing window.** This is the minimal,
+consistent extension of the proven M1/M2 substrate: the visibility-graph machinery
+(`build_windowed_free_space`, `build_visibility_graph`, `astar_visgraph`, reflex pruning, STRtree,
+`set_precision`) is reused **verbatim, called twice** — once per layer — rather than reinvented.
+
+**Per-layer obstacle sets (what changes vs M1/M2):**
+
+- **Shared across both layers (drills/holes pierce both copper layers):**
+  - The **board outline** (`extract_board_outline`) — same polygon clips both layers' free space
+    (the board edge is layer-independent).
+  - The **drill-hole obstacles** (`extract_drill_obstacles`) — through-hole pad drills + via drills.
+    These are circular obstacles that **pierce both F.Cu and B.Cu**, so the same
+    `drill_obstacles` list is added to BOTH per-layer free spaces. This is the geometric reason a
+    via cannot be placed on top of an existing drill: the drill circle is an obstacle on both
+    layers, so no candidate via site falls inside it.
+- **Per-layer (copper is layer-specific):**
+  - **F.Cu obstacles (layer 0):** other-net pads with `p["front"]` True (the current behaviour —
+    `build_windowed_free_space` already filters `if not p.get("front"): continue`) + already-routed
+    F.Cu track copper.
+  - **B.Cu obstacles (layer 1):** other-net pads with `p["back"]` True + already-routed B.Cu track
+    copper. **`extract_pads` already provides `p["back"]`** (PAD_SCRIPT: `ls.Contains(pcbnew.B_Cu)`).
+    A through-hole pad is BOTH front and back (it appears as an obstacle on both layers — correct,
+    its copper annulus is on both). An SMD pad on B.Cu is back-only (appears only on B.Cu). On
+    mitayi the B.Cu obstacle set is sparse (mostly through-hole pads + a few B.Cu SMD pads) — which
+    is exactly **why** B.Cu is the bypass lane the geometry-blocked F.Cu nets need.
+
+**The single change to `build_windowed_free_space`:** add a `layer: int = 0` parameter. The pad
+filter becomes `wants = p.get("front") if layer == 0 else p.get("back")`; `if not wants: continue`.
+The board-outline clip and `drill_obstacles` add are unchanged (shared). `extra_obstacles`
+(already-routed copper) becomes **per-layer** (the caller passes the layer's own routed-track
+obstacle list). Everything else — own-pad carve-out, inflate formula, snap — is identical. This is
+a ~3-line signature/filter change, NOT a rewrite: legality-by-construction is preserved per layer.
+
+```python
+# geom.py — the ONLY signature change (per-layer obstacle selection)
+def build_windowed_free_space(
+    pads, net_name, clearance_mm, track_mm, extra_obstacles, window_bbox,
+    board_outline=None, drill_obstacles=None,
+    layer: int = 0,                # NEW: 0=F.Cu, 1=B.Cu. Selects p["front"] vs p["back"].
+) -> tuple[free_space, obstacle_polys]: ...
+```
+
+**Determinism is unaffected:** each per-layer graph is built by the same deterministic pipeline
+(sorted corners, fixed i<j edge loop, integer A* key). Two layers = two independent deterministic
+graphs; the cross-layer link (below) is enumerated in fixed candidate-site order. Same-install
+byte-identity holds, proven through M2.
+
+## M3 design question 2 — Via-transition edges (how the two graphs connect)
+
+**Decision: a via is a single zero-length cross-layer edge linking `(x, y, 0)` on the F.Cu graph
+to `(x, y, 1)` on the B.Cu graph, at the existing `via_cost` parameter, placeable ONLY at a finite
+deterministic set of candidate via sites that pass the two-layer legality test (DQ4).** This is the
+visibility-graph realization of `astar.via_ok` — exact (Shapely disc-in-free-space on both layers)
+rather than cell-based.
+
+**Node model.** The M3 A* node becomes `(x, y, layer)` (the doc's long-planned `WayNode`). Each
+per-layer graph contributes its own `(x, y)` nodes tagged with its layer. The two node lists are
+concatenated into one index space: `[F_start, F_goal, *F_corners, *B_corners]` (B has no separate
+start/goal — the net's pads define the start/goal layer; see the pad-layer-reach note below).
+
+**Candidate via sites = a finite deterministic set.** A via may be placed at:
+1. **every shared obstacle corner** that exists as a node on BOTH layers' graphs at the same `(x,y)`
+   (snap to 1 nm; equal coords → same site), AND
+2. a **small deterministic lattice of via candidates seeded along the straight start→goal line**
+   (sampled every `via_pitch_mm`, default = `via_mm + clearance_mm`, snapped to 1 nm) — this seeds
+   via sites in OPEN regions where no obstacle corner exists but a layer change is still wanted
+   (the geometry-blocked nets cross open B.Cu, so the bend point may not coincide with a corner).
+
+Both site sources are sorted `(round(x,6), round(y,6))` → deterministic enumeration. For each
+candidate site that passes the DQ4 two-layer legality test, add a cross-layer edge
+`(site, 0) ↔ (site, 1)` with cost `via_cost` to the adjacency. The site `(x,y)` must also be a node
+on each layer's graph and **visible** (via the existing `is_visible`) to its neighbours on that
+layer — i.e. the site is inserted as an ordinary waypoint node on each layer's graph, and the
+cross-layer edge connects the two co-located waypoint nodes. (Implementation note: insert candidate
+via sites into BOTH per-layer node lists BEFORE building each layer's adjacency, so the in-plane
+visibility edges to/from the site are built by the existing edge loop with no special case.)
+
+**Cost & determinism.** `via_cost` is the **existing engine parameter** (`route_board_engine`
+default 10.0). Reuse it unchanged — do NOT invent a geometric via cost (parameter parity with the
+grid router keeps the scorecard apples-to-apples; Decision 4 already committed to this). The
+cross-layer edge is enumerated after the in-plane edges in fixed candidate-site sorted order, so the
+adjacency is byte-identical run-to-run.
+
+**Pad layer reach (where the path starts/ends).** A net's two pads define the start/goal nodes and
+their layers. For mitayi's geometry-blocked QSPI nets the pads are **through-hole** (both front and
+back) — so start and goal exist on BOTH layers, and the path may begin on F.Cu, via down to B.Cu,
+cross, and via back up to F.Cu, or even start on B.Cu. For an SMD F.Cu-only pad, start/goal exist
+only on layer 0 (a via adjacent to the pad provides the layer change). The start/goal node is added
+to each layer the pad reaches; A* terminates when it pops the goal node on ANY layer the goal pad
+reaches.
+
+## M3 design question 3 — A* over the 2-layer graph
+
+**Decision: one A* over the merged `(x, y, layer)` node space; in-plane edges carry Euclidean
+length (× congestion price, reusing M2's super-cell field unchanged); cross-layer edges carry
+`via_cost`. Heuristic = Euclidean in-plane distance to the goal `(x,y)`, plus `via_cost` iff the
+node's layer differs from the goal's layer AND the goal is reachable only on the other layer.**
+
+This is `astar_visgraph` / `_astar_congestion` extended with a layer field on the node — the heap
+key, integer 1 nm bucketing, `insertion_seq` tie-break, and sorted-neighbour expansion are all
+unchanged. The heuristic stays **admissible**: in-plane Euclidean underestimates true in-plane
+length (always), and adding `via_cost` only when a layer change is provably required never
+overestimates (a path that needs a layer change pays ≥ `via_cost`; a path that doesn't is on the
+goal's layer already so the term is 0). `via_cost ≥ 0`, so admissibility holds exactly as the M2
+congestion-priced heuristic does.
+
+```python
+# search.py — the M3 heuristic (admissible: in-plane Euclid + conditional one via_cost)
+def heuristic(node):           # node = (x, y, layer)
+    x, y, lyr = node
+    h = math.hypot(x - goal_x, y - goal_y)
+    if lyr != goal_layer and goal_reachable_only_on(goal_layer):
+        h += via_cost          # ≥1 layer change is unavoidable; never an overestimate
+    return h
+```
+
+Neighbours of `(x, y, layer)` = its in-plane visibility edges on `layer` (from that layer's adj)
+**plus** the cross-layer edge to `(x, y, 1 - layer)` if the site is a legal via. The path returned
+is a list of `(x, y, layer)` waypoints; a layer change between consecutive waypoints at the same
+`(x,y)` is a via, which `realize` turns into a via emission (DQ6).
+
+## M3 design question 4 — Via legality + the M2.1 hole-aware lesson (THE crux)
+
+**Decision: a candidate via site `(x, y)` is LEGAL iff a disc of radius `via_mm/2 + clearance_mm`
+is inside the free space on BOTH layers, AND a disc of radius `via_drill/2 + hole_clearance_mm`
+clears all OTHER drills/holes (hole-to-copper), AND drill-to-drill center distance to every other
+via/drill ≥ `via_drill + hole_to_hole_mm`. The `hole_clearance` (~0.25 mm) is LARGER than the
+copper clearance (~0.15–0.2 mm) — honoring only copper clearance is the #4 / boxed-in-via bug.**
+
+This is the single most important correctness rule in M3. The #4 exact-geometry probe and the M2.1
+diagnosis both showed the failure mode: a via nudged to satisfy only copper clearance still violates
+`hole_clearance` (drill-to-copper) or `hole_to_hole` (drill-to-drill) — congested vias are
+"boxed-in" by nearby drills. The check has **three independent predicates**, ALL of which must pass:
+
+1. **Copper-ring clearance, BOTH layers (the via annular ring vs other-net copper):**
+   `Point(x,y).buffer(via_mm/2 + clearance_mm).within(free_space_layer)` for `layer ∈ {0,1}`.
+   Because the per-layer free space already has all other-net copper subtracted (inflated by
+   `clearance + track/2`), this disc-within-free-space test is the via-copper-clearance check by
+   construction — the same legality-by-construction property the tracks already enjoy. **Use the
+   via radius `via_mm/2`, NOT the track half-width**, when building the disc.
+2. **Hole-to-copper clearance (the LARGER ~0.25 mm rule — the #4 lesson):** the via DRILL
+   (`via_drill/2`) must clear all other-net copper by `hole_clearance_mm`, which the project's DRC
+   treats as a SEPARATE, larger class than copper clearance. Concretely:
+   `Point(x,y).buffer(via_drill/2 + hole_clearance_mm)` must not intersect any other-net copper on
+   either layer. Since `hole_clearance > clearance`, this is a STRICTER disc than predicate 1 in the
+   region near drilled copper. Build a dedicated `hole_free_space_layer` = window − (copper inflated
+   by `hole_clearance` instead of `clearance`) for the drill disc test, OR test the drill disc
+   against the raw (un-inflated) copper polygons buffered by `hole_clearance`. Either is exact;
+   the design picks the first (one extra free-space build per layer, cheap, reuses the pipeline).
+3. **Hole-to-hole (drill-to-drill center distance):** for every existing drill/via center `c`,
+   require `dist((x,y), c) ≥ via_drill/2 + drill_r(c) + hole_to_hole_mm`. The `drill_obstacles`
+   list already carries inflated drill circles; a cheaper equivalent already available: the
+   `drill_obstacles` are inflated by `clearance + track/2`, so for hole-to-hole the design adds a
+   second drill-circle set inflated by `via_drill/2 + hole_to_hole_mm` and requires the via center
+   to be **outside** all of them. (This set is built once per problem, not per via.)
+
+**Where `hole_clearance_mm` / `hole_to_hole_mm` come from.** `project_geometry` currently surfaces
+`via_mm` / `via_drill_mm`; M3 extends it to also surface `hole_clearance` and `hole_to_hole` from
+the board's design rules (the same sexpr `setup`/`rules` block `project_geometry` already parses for
+`via_diameter`/`via_drill`). Fallbacks: `hole_clearance_mm = max(clearance_mm, 0.25)`,
+`hole_to_hole_mm = max(clearance_mm, 0.25)` (mitayi's observed values). **This is the M2.1
+hole-aware lesson made structural:** the via placement honors the larger drill clearances up front,
+so it never emits a boxed-in via that DRC then flags.
+
+**Fail / escalate cleanly when no legal via exists.** If NO candidate via site in the window passes
+all three predicates, the net's A* simply finds no cross-layer edge → no 2-layer path → the existing
+**window-escalation** fires (`window_mm *= 2`), widening the candidate-site lattice and corner set.
+If escalation reaches board scale with still no legal via, the net is reported
+`status="failed"` / `reason="no_legal_via"` (distinct from `"geometry_blocked"`) — it does NOT
+silently emit an illegal via. This is the clean-failure contract: **legal-or-nothing**, never
+legal-by-nudge-after-the-fact (the #4 regression we are structurally avoiding).
+
+## M3 design question 5 — Multi-pin nets (the ~20) — DECOMPOSITION + STAGING
+
+**Decision: M3-Phase-2. Decompose an N-pin net into a Minimum Spanning Tree (MST) over its pads;
+route the MST edges as 2-pin sub-routes SEQUENTIALLY; after each sub-route, the net's OWN realized
+copper (centerlines + vias) is added to the same-net "connection geometry" so later sub-edges may
+terminate on it (any point on already-routed same-net copper is a valid connection target, not just
+a pad). The Spike-M3 stays strictly 2-pin — multi-pin is built AFTER Phase-1 lands.**
+
+Concrete decomposition:
+
+1. **MST over pads.** Build a complete graph over the net's K pads with edge weight = Euclidean
+   pad-to-pad distance (deterministic: ties broken by `(pad_i_idx, pad_j_idx)`). Compute the MST
+   (Prim's, deterministic seed = lowest-index pad). The MST has K−1 edges. Rationale: MST minimizes
+   total wire length, matches how a human fans out a bus, and is deterministic.
+2. **Sequential 2-pin routing of MST edges, growing same-net copper.** Order the K−1 edges
+   deterministically (by `(min_pad_idx, max_pad_idx)`). Route edge 1 as a 2-pin gridless route
+   (the Phase-1 machinery). Then for edge e, the **goal is not just pad B but the nearest point on
+   the net's already-routed copper** — i.e. the start/goal set for edge e includes pad B AND every
+   waypoint of the net's routed sub-paths so far. The simplest deterministic realization: add the
+   net's already-routed centerline (buffered to a thin same-net "free connector" polygon) as
+   ADDITIONAL goal nodes in that sub-edge's visibility graph; A* terminates on whichever goal node
+   it reaches first. Same-net copper is "free" (cost 0 to land on, not an obstacle) — mirroring how
+   the grid router lets a net's own cells be re-entered.
+3. **Vias in multi-pin.** Each 2-pin sub-edge may itself use a via (Phase-1 machinery unchanged), so
+   a multi-pin net naturally spans both layers. A sub-edge terminating on same-net B.Cu copper
+   connects there directly (no extra via needed if it is already on B.Cu).
+
+**Staging rationale (why Phase-2, not in the spike):** the via mechanism (DQ2/3/4) is the decisive,
+risky unlock and must be proven on the cleanest possible case — ONE 2-pin geometry-blocked net.
+Folding MST decomposition into the spike would conflate two unproven mechanisms. Phase-2 reuses
+100% of the Phase-1 via/2-layer machinery; it adds only the MST + the same-net-copper-as-goal
+connection logic, which is a `negotiate.py`-level concern (net-set orchestration), not a substrate
+concern. **Phase-2 exit criterion:** route ≥3 mitayi multi-pin nets (e.g. a GPIO bus) all-legal,
+0 new DRC errors, deterministic.
+
+## M3 design question 6 — Integration (extends route_net_gridless / route_gridless_set / emit_routes)
+
+The integration reuses the M2.1 plumbing — the gaps are small and additive.
+
+**`build_windowed_free_space` (geom.py):** +`layer` param (DQ1). One filter line changes.
+
+**`route_net_gridless` (route.py) → layer-aware 2-pin (Phase-1):** the window loop builds free space
+on BOTH layers (two `build_windowed_free_space` calls), assembles candidate via sites (DQ2),
+tests via legality (DQ4), builds the merged 2-layer graph, runs the 2-layer A* (DQ3). On success,
+`world_paths` becomes a list of `(x, y, layer)` waypoints and a new `world_vias: list[tuple[float,
+float]]` field carries the via centers. `GridlessRouteResult` gains `world_vias`.
+
+**`route_gridless_set` (negotiate.py) → layer-aware negotiation:** the congestion-priced graph
+builder (`_build_congestion_visgraph`) and `_route_one_net_congestion` gain the same two-layer
+extension. The super-cell history field is **shared across both layers** (a via and the tracks it
+joins all credit the super-cells they cross — congestion is an `(x,y)` property, layer-independent,
+exactly as Decision 3 argued). The geometry-blocked pre-classifier (which today quarantines the
+~92%-board-diagonal nets) now runs the **2-layer** reachability test: a net is only geometry-blocked
+if NO 2-layer path (with legal vias) exists even at board scale — so the 4 QSPI nets that were
+quarantined as "geometry-blocked (M3)" should now route. This closes the M2.1 loop: those nets were
+deliberately quarantined FOR M3.
+
+**`GridlessNetRoute` adapter (adapter.py) → vias + B.Cu rasterization:** `world_paths` becomes
+`list[list[tuple[float, float, int]]]` (the layer field, already anticipated in the docstring as
+"Phase 3 adds layer"). `rasterize_into_grid` walks each segment on its waypoint's layer (no longer
+hardcoded `layer = 0`), and `world_vias` rasterizes a via cell into BOTH layers + `via_sites`
+(reusing the grid router's `via_halfwidth_cells` inflation) so subsequent grid AND gridless nets see
+the via on both layers + as a drill obstacle. This makes the shared occupancy ledger via-aware.
+
+**`emit_routes` (kicad.py) → emit B.Cu segments + the via (REUSE existing via emission):** the
+world-centerline branch (currently `layer = layer_name[0]` hardcoded) reads each waypoint's layer
+and emits `(layer F.Cu)` / `(layer B.Cu)` accordingly. After segments, it emits each `world_vias`
+center as a `(via (at x y) (size via_mm) (drill via_drill_mm) (layers F.Cu B.Cu) net)` node —
+**this is the exact `(via ...)` node the grid path already emits** (kicad.py lines ~323–328), so the
+via writer is reused verbatim; only the position source changes (gridless `world_vias` instead of
+the grid `via_pos` map). No nudge is applied to gridless vias — they are placed legal-by-construction
+(DQ4), so `nudge_vias` does not touch them (avoids the #4 +4-hole_clearance nudge regression).
+
+**Determinism + existing gates preserved.** All new structures are sorted/seeded; the 2-layer A*
+keeps the integer 1 nm heap key + `insertion_seq` tie-break. The hard invariant holds:
+`gridless_nets=None`/empty AND no M3 nets → byte-identical to the M2 engine. The
+`gridless_rescue=False` and `gridless_negotiate=False` defaults stay byte-identical. Spike-M3 runs
+the same 3-run (same-process ×2 + fresh subprocess) byte-identical gate every prior spike used.
+
+## M3 milestone plan (revises the Decision-5 M3 row into measurable sub-milestones)
+
+| Sub-milestone | Goal | Exit criterion |
+|---------------|------|----------------|
+| **Spike-M3** ⬅ NEXT | Prove 2-layer + legal via closes ONE geometry-blocked 2-pin net | The QSPI net connects (ratsnest resolved), 0 new trace-attributable DRC errors INCLUDING via hole_clearance/hole_to_hole, deterministic (byte-identical 2 runs + subprocess), runtime sane. Standalone script. |
+| **M3-P1: vias / 2-layer 2-pin in the package** | Promote spike → `geom.layer` param + 2-layer `route_net_gridless`/`route_gridless_set` + adapter vias + emit B.Cu/via | On the 4 mitayi geometry-blocked QSPI nets routed gridlessly via `gridless_rescue`: all 4 connect, 0 new DRC errors (incl. hole classes), deterministic; `gridless_rescue=False` byte-identical to current. |
+| **M3-P2: multi-pin connection trees** | MST decomposition + same-net-copper-as-goal | ≥3 mitayi multi-pin nets (a GPIO bus) route all-legal, 0 new DRC errors, deterministic. |
+| **M3 gate (vs scorecard)** | The M3 row of Decision 5, measured | mitayi HUMAN placement via `_verify_m2_gate.py`-style method: hole_clearance + hole_to_hole DRC classes ≤ grid baseline; 0 via-clearance errors on gridless nets; **unconnected strictly < 48** (the via unlock relieves ≥4 QSPI nets + multi-pin gains). |
+
+---
+
+# SPIKE-M3 — the next decisive experiment (built & measured NEXT)
+
+**Goal.** Prove that **2-layer routing + a single legal via insertion closes a 2-pin net that
+single-layer F.Cu routing provably cannot** — the M2.1-identified geometry-blocked case. Decisive
+because it is the first time the gridless router crosses layers; everything M3-Phase-1 builds rests
+on this working. Standalone script `scripts/spikeM3_gridless_via_2layer.py`, **no engine changes**
+(same posture as Spike-0b / Spike-1 / Spike-2 — reuse `build_problem` + the package + the spike0b
+helpers; import the production `geom`/`search` so the spike does not re-derive the substrate).
+
+**Net selection (mechanical, reproducible — record the rule's output).** Route ONE mitayi QSPI 2-pin
+net that the M2.1 `route_gridless_set` pre-classifier flagged `geometry_blocked` on F.Cu — concretely
+`/QSPI_SD1` or `/QSPI_SD2` (the rule: among nets `route_gridless_set` returns with
+`status="geometry_blocked"`, pick the lowest-`order_nets`-priority 2-pin net whose
+`min_needed_window > 0.5 × board_diagonal`; print the chosen net + its single-layer min window to
+prove it is genuinely F.Cu-blocked). Confirm both pads are reachable on B.Cu (through-hole, or one
+hop to a via site) before routing.
+
+**Procedure.**
+1. Copy mitayi to a project-local temp dir (`.spikeM3_tmp`, mirroring Spike-1's flatpak workaround),
+   `strip_routing` via the reused `setup_board`. `extract_pads` + `project_geometry` (extended to
+   surface `hole_clearance`/`hole_to_hole`, fallback `max(clearance, 0.25)`) + `build_problem`.
+   `extract_board_outline` + `extract_drill_obstacles` (drills pierce both layers).
+2. **Confirm F.Cu-blocked:** run the existing single-layer `route_net_gridless` (F.Cu only) on the
+   net and assert it FAILS (no path even at board-scale window) — this proves the via is necessary,
+   not incidental.
+3. **Build per-layer free space (F.Cu + B.Cu):** call `build_windowed_free_space(..., layer=0)` and
+   `build_windowed_free_space(..., layer=1)` over the same window. F.Cu obstacles = front pads +
+   shared drills; B.Cu obstacles = back pads + shared drills.
+4. **Assemble candidate via sites** (DQ2): shared obstacle corners present on both layers +
+   straight-line lattice sampled every `via_mm + clearance` (snapped 1 nm, sorted).
+5. **Legal-via test** (DQ4): for each candidate site, all three predicates — copper-ring disc within
+   both free spaces (`via_mm/2 + clearance`), drill disc clears other-net copper by the LARGER
+   `hole_clearance`, and drill-to-drill `hole_to_hole` to every existing drill. Keep only legal
+   sites. Print how many candidates passed and the chosen via center.
+6. **Build the merged 2-layer visibility graph + via-transition edges** (insert legal via sites as
+   nodes on BOTH layers, build each layer's in-plane adjacency via the reused
+   `build_visibility_graph`, add cross-layer edges at `via_cost`).
+7. **2-layer A*** (DQ3): node `(x,y,layer)`, admissible heuristic, deterministic heap key. Recover
+   the `(x,y,layer)` waypoint path + the via center(s) where the layer changes.
+8. **Realize + emit:** emit F.Cu segments on layer 0, B.Cu segments on layer 1
+   (`emit_net_segments(..., layer="B.Cu")`), and the via as a `(via (at x y) (size via_mm)
+   (drill via_drill) (layers F.Cu B.Cu) net)` node (reuse the grid emit's via node shape).
+   `refill_zones`; `run_drc`.
+9. **Determinism gate:** re-run steps 3–8 in the same process and once in a fresh subprocess; assert
+   emitted segment+via coordinates are byte-identical across all three (run the gate BEFORE any DRC
+   that mutates shared state — the Spike-1 FIX-4 lesson).
+10. **Report** (Structured Result + console): chosen net + single-layer min window (proof it is
+    blocked), candidate-via count + legal count + chosen via center, F.Cu/B.Cu segment counts,
+    DRC before/after (esp. hole_clearance/hole_to_hole/via classes), ratsnest resolved Y/N, runtime,
+    determinism PASS/FAIL, GO/NO-GO.
+
+**Pass criteria (ALL must hold for GO).**
+- **Connects:** the net's ratsnest is resolved (the previously-unconnected geometry-blocked net is
+  now connected via the 2-layer path).
+- **All-legal incl. holes:** 0 new trace-attributable DRC errors, **explicitly including via
+  `hole_clearance` (drill-to-copper) and `hole_to_hole` (drill-to-drill) and via copper-clearance**
+  classes — the #4 boxed-in-via failure mode must NOT recur.
+- **Deterministic:** byte-identical emitted segment + via coordinates across same-process ×2 +
+  fresh subprocess.
+- **Runtime sane:** the single 2-layer route completes in a runtime comparable to a 2-pin M1 route
+  (two per-layer graphs ≈ 2× one graph + the via test; sub-second expected on the QSPI window).
+
+**Validates:** that per-layer free space + a via-transition edge + 2-layer A* + a legality-checked
+via insertion closes a net that single-layer F.Cu routing provably could not — the core M3 unlock;
+that the larger hole_clearance/hole_to_hole drill rules are honored up front (legal-by-construction
+via, no post-hoc nudge); that determinism holds across the layer-crossing path.
+
+**Defers:** multi-pin nets / MST decomposition (M3-Phase-2); full-board negotiation WITH vias
+(M3-P1 package — the spike routes ONE net, no rip-up); via-congestion rip-up (when two nets contend
+for the same via site — M3-P1/P2); B.Cu pour interaction (pours refill post-route as today);
+multiple vias per net beyond what the single QSPI net needs (the machinery supports N vias; the
+spike just exercises ≥1).
+
+## SPIKE-M3 — ordered developer task list
+
+Reuse the production package + spike0b helpers — **do NOT re-derive the substrate.** Import
+`build_windowed_free_space`/`build_visibility_graph`/`astar_visgraph`/`is_visible`/`snap` from
+`tracewise.route.gridless.{geom,search}`; `setup_board`/`emit_net_segments`/`extract_emitted_coords`
+from `scripts/spike0b_gridless_blocked_net.py`; `extract_pads`/`project_geometry`/`build_problem`/
+`extract_board_outline`/`extract_drill_obstacles` from the engine; `run_drc`/`strip_routing` from
+`bridge`. NO `pyproject.toml` / production-source edits — that lands in M3-P1.
+
+1. Confirm the venv has `shapely>=2.0,<3.0` (`shapely.geos_version`). Create
+   `scripts/spikeM3_gridless_via_2layer.py`. Copy mitayi → `.spikeM3_tmp`, `strip_routing` via the
+   reused `setup_board`. `extract_pads` + `project_geometry` + `build_problem` +
+   `extract_board_outline` + `extract_drill_obstacles`.
+2. Extend the local `geo` dict with `hole_clearance` / `hole_to_hole` (parse from the board's
+   design-rules sexpr if present; else `max(geo["clearance_mm"], 0.25)`). Print them.
+3. **Select the net mechanically:** run the production `route_gridless_set` on mitayi's gridless
+   subset, take the `status="geometry_blocked"` 2-pin nets, pick the lowest-`order_nets`-priority one
+   (`/QSPI_SD1` or `/QSPI_SD2`); print net + its single-layer `min_needed_window` vs board diagonal.
+4. **Prove F.Cu-blocked:** call single-layer `route_net_gridless` (F.Cu) on the net; assert it
+   returns `ok=False` even after window escalation (records the blocked min-window). If it routes,
+   pick the next geometry-blocked net (the rule must yield a genuinely blocked net).
+5. **Per-layer free space:** add a thin local `build_windowed_free_space` wrapper that passes
+   `layer=0` and `layer=1` (until the production `layer` param lands in M3-P1, the spike may inline
+   the 1-line front/back filter change). Build `fs_F, obs_F` and `fs_B, obs_B` over the net's window
+   (drills + board outline shared).
+6. **Candidate via sites:** collect shared obstacle corners (present on both layers at equal 1 nm
+   coords) + a straight start→goal lattice every `via_mm + clearance`; sort `(round(x,6),round(y,6))`.
+7. **Legal-via predicate** (the crux — implement all three, in this order, short-circuit on first
+   fail): (a) `Point(site).buffer(via_mm/2 + clearance).within(fs_F)` AND `.within(fs_B)`;
+   (b) drill disc `buffer(via_drill/2 + hole_clearance)` does not intersect other-net copper on
+   either layer (build a `hole_clearance`-inflated copper set once); (c) `dist(site, c) ≥
+   via_drill/2 + drill_r(c) + hole_to_hole` for every existing drill center `c`. Keep legal sites;
+   print candidate vs legal counts.
+8. **Merged 2-layer graph:** insert each legal via site as a node into BOTH layers' node lists;
+   build each layer's in-plane adjacency via the reused `build_visibility_graph`; add cross-layer
+   edges `(site,0)↔(site,1)` at `via_cost` (default 10.0). Node = `(x,y,layer)`.
+9. **2-layer A*:** extend `astar_visgraph` to the `(x,y,layer)` node + the admissible
+   in-plane-Euclid + conditional-`via_cost` heuristic; integer 1 nm heap key + `insertion_seq`
+   tie-break unchanged. Recover the `(x,y,layer)` path + via center(s) at layer changes.
+10. **Realize + emit:** emit F.Cu segments (layer 0) and B.Cu segments (layer 1,
+    `emit_net_segments(..., layer="B.Cu")`); emit each via center as `(via (at x y) (size via_mm)
+    (drill via_drill) (layers F.Cu B.Cu) net)`. `refill_zones`; `run_drc`.
+11. **Determinism gate (BEFORE the comparison DRC mutates state):** re-run steps 5–10 same-process +
+    fresh subprocess; assert byte-identical emitted segment+via coords across all three.
+12. **Evaluate + report** (Structured Result + console): ratsnest resolved Y/N; DRC before/after
+    with hole_clearance/hole_to_hole/via classes called out; candidate/legal via counts + chosen
+    center; F.Cu/B.Cu segment counts; runtime; determinism PASS/FAIL; GO/NO-GO. On GO, recommend the
+    M3-P1 package promotion + a `decisions/` KB entry (2-layer via model confirmed). On NO-GO,
+    record whether the failure is the legal-via predicate (tighten DQ4) or determinism (the layer
+    field broke a tie-break) — do NOT abandon the per-layer-graph approach on a single wobble.
+
+## M3 risks and mitigations
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Via placed honoring only copper clearance → hole_clearance/hole_to_hole DRC error (#4 regression) | Med | High | DQ4 three-predicate legal-via test enforces the LARGER `hole_clearance` + `hole_to_hole` up front; legal-or-nothing (no post-hoc nudge); spike pass-criterion explicitly checks these DRC classes |
+| `hole_clearance`/`hole_to_hole` not in `project_geometry` → wrong fallback | Low | Med | Parse from board design-rules sexpr; fallback `max(clearance, 0.25)` (mitayi's observed values); print the values used so a wrong fallback is visible in the spike report |
+| Candidate-via lattice misses the only legal via site in a tight region | Med | Med | Lattice (every `via_mm+clearance`) + ALL shared obstacle corners as sites; window escalation widens both; clean `no_legal_via` failure (not an illegal emit) when truly boxed-in |
+| Two per-layer graphs double the runtime | Low | Med | Per-layer windows stay small (M1/M2 reflex pruning + STRtree apply per layer); B.Cu is sparse on mitayi so its graph is tiny; spike measures runtime |
+| Determinism breaks when the layer field enters the A* node/tie-break | Low | High | Node `(x,y,layer)` sorts deterministically; cross-layer edges enumerated in fixed site order; 3-run byte-identical gate (proven mechanism through M2) |
+| B.Cu pad-layer-reach wrong (via on an SMD-only-F.Cu pad) | Low | Med | Start/goal added per layer the pad reaches (`front`/`back`); A* terminates on goal on ANY reachable layer; mitayi QSPI pads are through-hole (both layers) — the clean case |
+| Multi-pin MST routing order leaves a sub-edge stranded | Med (P2) | Med | Same-net copper as free goal nodes; deterministic edge order; rip-up/reorder is the P2 negotiation concern, deferred from the spike |
+
+## M3 acceptance rubric
+
+Per `agents/pm-reference/rubric-format.md`. Atomic, binary, evidence-mandatory. Applies to THIS M3
+design section + the Spike-M3 it specifies.
+
+1. **R-M3-1 — Per-layer free space + visibility graph specified.** PASS iff the doc states one graph
+   per layer over per-layer obstacle sets, names what is shared (board edge + drills) vs per-layer
+   (front/back pads + that layer's tracks), and the exact `geom.build_windowed_free_space` `layer`
+   param change. Evidence: M3 DQ1.
+2. **R-M3-2 — Via-transition model pinned.** PASS iff the doc defines the via as a cross-layer edge
+   at the existing `via_cost`, names the finite deterministic candidate-via-site set, and the
+   node→`(x,y,layer)` change. Evidence: M3 DQ2.
+3. **R-M3-3 — 2-layer A* with admissible heuristic.** PASS iff node=`(x,y,layer)`, in-plane Euclid +
+   conditional `via_cost` heuristic stated admissible, deterministic heap key reused. Evidence: DQ3.
+4. **R-M3-4 — Via legality is hole-aware (the #4/M2.1 lesson).** PASS iff the doc states all THREE
+   predicates (copper-ring both layers, drill-to-copper `hole_clearance` LARGER than copper
+   clearance, drill-to-drill `hole_to_hole`), where the rules come from, and the legal-or-nothing
+   clean-failure contract. Evidence: DQ4.
+5. **R-M3-5 — Multi-pin decomposition + staging.** PASS iff MST-over-pads → sequential 2-pin
+   sub-routes with same-net copper as free goals is specified AND explicitly staged to M3-Phase-2
+   (spike stays 2-pin). Evidence: DQ5.
+6. **R-M3-6 — Integration plan names the exact extension points.** PASS iff `build_windowed_free_space`
+   `layer` param, `route_net_gridless`/`route_gridless_set` two-layer extension, adapter
+   `world_paths` layer + `world_vias` rasterization, and `emit_routes` B.Cu-segment + reused-via
+   emission are each named. Evidence: DQ6.
+7. **R-M3-7 — Determinism + existing gates preserved.** PASS iff the doc states the 2-layer A* keeps
+   the integer heap key + tie-break, and the `gridless_*=False`/None byte-identical invariant holds.
+   Evidence: DQ6 final paragraph.
+8. **R-M3-8 — Spike-M3 fully + decisively specified.** PASS iff a mechanical net-selection rule, the
+   procedure, exact pass criteria (connects + all-legal-incl-hole-classes + deterministic + runtime),
+   validates, and defers are all stated. Evidence: SPIKE-M3 section.
+9. **R-M3-9 — Spike-M3 developer task list ordered + standalone.** PASS iff a numbered task list
+   reusing `build_problem` + the package + spike0b helpers, with NO production-source edits, exists.
+   Evidence: SPIKE-M3 task list.
+10. **R-M3-10 — No production code written.** PASS iff only this `.md` is edited (pseudocode/contracts
+    only; no runnable files created). Evidence: `files_changed` = this doc only.
