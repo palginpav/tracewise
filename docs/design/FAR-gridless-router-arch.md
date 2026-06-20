@@ -1655,3 +1655,30 @@ too slow on a clean board; option 2 (cross-substrate rip-up) is net-negative wit
 same-net-copper-as-goal), which would route the ~20 multi-pin nets AND enable net-positive CSRU swaps.**
 (Also noted: CSRU's board-wide 2-layer window ran ~10min/net — the via-search wants the same locality/
 perf treatment as the negotiate path if CSRU is revisited post-M3-P2.)
+
+---
+
+## Spike-M3P2 (2026-06-20) — GO: multi-pin connection tree (MST + same-net-copper-as-goal) proven
+
+`scripts/spikeM3P2_gridless_multipin.py` (independently verified). Routed `/GPIO15` (4 pins, 3 MST
+sub-edges) as a connection tree.
+
+- **Net FULLY connected:** real DRC net_unconnected **2 → 0**; 0 new errors; 0 via-hole errors.
+- **The key new mechanism FIRED — same-net-copper-as-goal:** sub-edge[2] took a COPPER SHORTCUT,
+  terminating on an interior point of already-routed same-net copper (157.97, 95.24) at 9.985mm instead
+  of routing to the pad at 10.914mm. This proves it's a connection TREE (later sub-edges attach to the
+  net's own copper), not K-1 independent pad-pad routes.
+- **Deterministic:** byte-identical emitted coords. **Fast/bounded:** max sub-edge 1.5s, windows
+  8–15.9mm — the locality lesson held; NO board-wide blowup (unlike options 1 & 2).
+
+**Real limitation surfaced (fix in M3-P2 production):** sub-edge[1] (pad[2]→pad[1]) FAILED with
+`realize_failed: waypoint outside free_space (0.235mm)` — a THROUGH-HOLE pad whose center sits just
+outside the board-edge-shrunk free space. Here it was REDUNDANT (the net had only 2 ratsnest gaps, so 2
+routed sub-edges fully connected it), so connectivity held — but on a net where every MST edge is
+load-bearing, such a failure would leave it unconnected. **M3-P2 production must carve the routing net's
+OWN start/goal pad into free space even at the board boundary** (mirror the M2.1 own-pad carve-out), so
+boundary through-hole pads are always reachable.
+
+**M3-P2 mechanism is GO.** Next: M3-P2 production — promote MST decomposition + same-net-copper-as-goal
+into `route_gridless_set`/the engine (layer-aware, bounded windows), ADD the boundary own-pad carve-out
+fix, then route mitayi's ~20 unconnected multi-pin nets and measure the M3 connectivity gate (unc < 48).
