@@ -1541,3 +1541,30 @@ design section + the Spike-M3 it specifies.
    Evidence: SPIKE-M3 task list.
 10. **R-M3-10 — No production code written.** PASS iff only this `.md` is edited (pseudocode/contracts
     only; no runnable files created). Evidence: `files_changed` = this doc only.
+
+---
+
+## Spike-M3 (2026-06-20) — GO: 2-layer + legal via closes a net F.Cu provably cannot
+
+`scripts/spikeM3_gridless_via_2layer.py` (independently re-verified). Routed `/QSPI_SD0`, a mitayi
+net the M2.1 classifier flagged geometry-blocked on F.Cu.
+
+- **F.Cu-blocked PROVEN:** single-layer `route_net_gridless` returns ok=False even at a 55.3mm window
+  (100% of board diagonal; visibility graph edges=0) — the via is NECESSARY, not incidental.
+- **2-layer route:** F.Cu → via → B.Cu → via → F.Cu (4 segments, 2 vias). Ratsnest RESOLVED
+  (net_unconnected 1→0; board unconnected 126→111).
+- **Via legality held:** 577 candidate sites, **198 legal** under the 3-predicate hole-aware test
+  (copper ring both layers + drill-to-copper @ hole_clearance 0.25 + drill-to-drill @ hole_to_hole 0.15).
+  **0 new DRC errors, 0 via hole_clearance/hole_to_hole errors** — the #4/M2.1 boxed-in-via regression
+  did NOT recur. Legal-by-construction via (no post-hoc nudge) is validated.
+- **Deterministic:** byte-identical emitted segment+via coords across same-process ×2 + fresh subprocess.
+- **Runtime:** 2-layer A* solve 0.43s (graph build ~6.5s; grid-setup of the other 56 nets dominates
+  wall time but is incidental to the via mechanism).
+
+Key spike-time fix (promote to M3-P1): per-COMPONENT exterior-ring corner collection — grid-routed
+F.Cu copper creates fragment obstacles with no interior rings, which left the visibility graph with 0
+edges; per-component exterior vertices fix it AND cut the edge-build ~93% (964K→64K pairs).
+
+**M3 core via mechanism is GO.** Next: M3-P1 — promote 2-layer + legal-via into the production package
+(`route_net_gridless`/`route_gridless_set` layer-aware) and route all 4 geometry-blocked QSPI nets via
+`gridless_rescue`, then the M3 scorecard gate.
