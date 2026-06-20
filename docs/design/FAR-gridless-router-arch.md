@@ -1626,3 +1626,32 @@ blocking GRID tracks to the FAST grid-first rescue path (rescue rips the grid co
 corridor). This keeps the fast post-grid free space AND clears the boxed-in blockage — rather than
 fighting gridless-first's clean-board runtime. Fixing gridless-first's via-search performance on large
 windows is a SEPARATE optimization, deferred unless option 2 also stalls.
+
+---
+
+## Spike-CSRU / option 2 (2026-06-20) — NO-GO: the real lever is MULTI-PIN (M3-P2), not 2-pin via tactics
+
+`scripts/spike_csru_cross_substrate_ripup.py` — cross-substrate rip-up on the fast grid-first path:
+rip grid tracks blocking a boxed-in QSPI net, 2-layer-route the QSPI net in the freed corridor, reroute
+the ripped grid nets, accept the swap only if net-positive.
+
+**Result: NO-GO — no connectivity gain (final 48 unconnected, unchanged).** BUT the via mechanism is
+NOT the problem: after ripping blockers, both QSPI nets route 2-layer fine (526 / 474 legal via sites,
+route succeeds, 0 via-hole errors). The binding constraint is revealed:
+- `/QSPI_SCLK` corridor is occupied by **18 nets, 12 of them MULTI-PIN** (GND/83 pads, +3V3/32, GPIO/5-7,
+  VBUS/10); `/QSPI_SD2` by 14 nets, 10 multi-pin.
+- The current gridless rerouter is **2-pin only**, so the displaced multi-pin nets can't be put back →
+  swap is net-negative (+1 QSPI vs −10 to −12 grid) → correctly REJECTED. Final unconnected unchanged.
+
+**Convergent conclusion across options 1 & 2:** mitayi's remaining connectivity gap is **gated by
+MULTI-PIN net support (M3-P2)** — both directly (the ~20 still-unconnected nets are multi-pin/multi-layer)
+AND indirectly (connecting the 2 boxed-in QSPI nets requires displacing multi-pin blockers). The 2-pin
+gridless + 2-layer-via machinery (M1/M2/M3-P1, all spikes GO) is built and proven, but it has reached its
+useful ceiling on mitayi WITHOUT multi-pin routing.
+
+**Both tactical options for the 2-pin path are now exhausted/documented:** option 1 (gridless-first) is
+too slow on a clean board; option 2 (cross-substrate rip-up) is net-negative without a multi-pin rerouter.
+**The path to real mitayi connectivity gains is M3-P2 (multi-pin connection trees: MST decomposition +
+same-net-copper-as-goal), which would route the ~20 multi-pin nets AND enable net-positive CSRU swaps.**
+(Also noted: CSRU's board-wide 2-layer window ran ~10min/net — the via-search wants the same locality/
+perf treatment as the negotiate path if CSRU is revisited post-M3-P2.)
