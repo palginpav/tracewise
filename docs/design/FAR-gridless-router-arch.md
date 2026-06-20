@@ -1599,3 +1599,30 @@ these nets.
 2-layer-capable `negotiate` path) rather than rescue-after — re-measure unconnected. If still blocked,
 the deeper fix is cross-substrate rip-up (rescue rips grid tracks that wall it off). The committed M3
 mechanism is the foundation for both. (Do NOT claim a connectivity gain until A/B shows unc < 48.)
+
+---
+
+## M3-P1.1 (2026-06-20) — gridless-first tested: the two strategies have OPPOSITE failure modes
+
+Wired geometry-blocked nets to attempt the 2-layer route in the gridless-FIRST `negotiate` path
+(`multi.py`: on `status=='geometry_blocked'`, call `_route_net_2layer` before the grid claims corridors;
+bounded via-search window). No-op-safe (`gridless_negotiate=False` byte-identical); suite green; ruff clean.
+
+**Finding (decisive): routing geometry-blocked QSPI nets gridless-first is PATHOLOGICALLY SLOW.** Even
+just 2 nets (`/QSPI_SCLK`, `/QSPI_SD2`) did NOT complete the route in >25 min (killed). Root cause: on a
+CLEAN board the free space is HUGE, so the via-candidate-site generation + the 2-layer visibility graph
+at large windows explodes (the O(n²) regime the M2 vectorization only tamed for SMALL/congested windows).
+Spike-M3 was fast (0.43s) ONLY because it ran POST-grid, where free space is fragmented and bounded.
+
+**So the two M3 deployment strategies fail in OPPOSITE ways:**
+| strategy | speed | connectivity |
+|---|---|---|
+| grid-first rescue (M3-P1) | FAST (post-grid free space bounded) | 0 rescued — corridors walled off by grid (boxed-in) |
+| gridless-first (M3-P1.1) | PATHOLOGICALLY SLOW (clean-board free space explodes via search) | has room, but never finishes |
+
+**Reframed plan — option 2 (cross-substrate rip-up) is now clearly the better bet:** add rip-up of
+blocking GRID tracks to the FAST grid-first rescue path (rescue rips the grid copper walling off
+`/QSPI_SCLK`/`/QSPI_SD2`, reroutes them on the grid, then 2-layer-routes the QSPI nets in the freed
+corridor). This keeps the fast post-grid free space AND clears the boxed-in blockage — rather than
+fighting gridless-first's clean-board runtime. Fixing gridless-first's via-search performance on large
+windows is a SEPARATE optimization, deferred unless option 2 also stalls.

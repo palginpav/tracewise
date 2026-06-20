@@ -374,6 +374,12 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                     drill_obstacles=neg_drill_obstacles,
                 )
 
+                # M3-P1.1: collect geometry-blocked nets for 2-layer via attempt.
+                # Build pad_map here so the 2-layer pass has world-mm coords.
+                _neg_pad_map: dict[str, dict] = {
+                    nd["net_name"]: nd for nd in net_set
+                }
+
                 for net_name, neg_res in neg_results.items():
                     net = by_name_all.get(net_name)
                     if net is None:
@@ -387,8 +393,55 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                         )
                         _mark(grid, nr, 1)
                         results[net_name] = nr
+                    elif neg_res.status == "geometry_blocked":
+                        # M3-P1.1: geometry-blocked → attempt 2-layer F.Cu→via→B.Cu
+                        # BEFORE any grid copper exists (gridless-FIRST strategy).
+                        # Only pad obstacles + board edge + drills are active here.
+                        # Skip single-layer escalation (known to fail for geometry-
+                        # blocked nets) — go directly to _route_net_2layer.
+                        from tracewise.route.gridless.route import _route_net_2layer
+
+                        nd_entry = _neg_pad_map.get(net_name)
+                        drill_centers = gk.get("drill_centers") or []
+                        if nd_entry is not None:
+                            _pa = nd_entry["pad_a"]
+                            _pb = nd_entry["pad_b"]
+                            # Bound the via-search window to avoid O(n²) explosion
+                            # on the large clean-board free space.  Use 3× the
+                            # pad-to-pad span + 8mm as a generous but bounded cap;
+                            # the rescue path (post-grid) omits this cap (None)
+                            # because fragmented free space is already bounded.
+                            import math as _math
+                            _pad_span = _math.hypot(_pb[0] - _pa[0], _pb[1] - _pa[1])
+                            _max_win = _pad_span * 3.0 + 8.0
+                            result_2l = _route_net_2layer(
+                                pad_a=_pa,
+                                pad_b=_pb,
+                                pads=pads,
+                                net_name=net_name,
+                                geo=geo,
+                                board_bbox=board_bbox,
+                                extra_obstacles=[],   # no grid copper yet
+                                board_outline=neg_board_outline,
+                                drill_obstacles=neg_drill_obstacles or [],
+                                drill_centers=drill_centers,
+                                window_mm=neg_window_mm,
+                                max_window_mm=_max_win,
+                            )
+                            if result_2l is not None and result_2l.ok and result_2l.world_paths:
+                                nr = to_gridless_netroute(
+                                    net, result_2l.world_paths, grid,
+                                    world_vias=result_2l.world_vias,
+                                )
+                                _mark(grid, nr, 1)
+                                results[net_name] = nr
+                                continue
+                        # 2-layer also failed: report as failed
+                        results[net_name] = NetRoute(
+                            net=net, ok=False, reason=neg_res.reason
+                        )
                     else:
-                        # Failed / geometry-blocked: report as a failed NetRoute
+                        # Other failure: report as a failed NetRoute
                         results[net_name] = NetRoute(
                             net=net, ok=False, reason=neg_res.reason
                         )

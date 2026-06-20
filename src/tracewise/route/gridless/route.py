@@ -282,6 +282,7 @@ def _route_net_2layer(
     drill_obstacles: list,
     drill_centers: list,
     window_mm: float,
+    max_window_mm: float | None = None,
 ) -> GridlessRouteResult | None:
     """Attempt a 2-layer F.Cu→via→B.Cu route for a geometry-blocked net.
 
@@ -292,6 +293,11 @@ def _route_net_2layer(
     window escalations.  It does NOT escalate the window further; the full-board
     window (board diagonal) is used as the single attempt so via sites are
     drawn from the complete routing surface.
+
+    ``max_window_mm`` caps the via-search window.  ``None`` (default) means
+    full-board (the original behaviour).  Callers that know the board free space
+    is large (e.g. the gridless-FIRST negotiate path on a clean board) can pass
+    a smaller cap to avoid the O(n²) visibility-graph explosion.
     """
     _require_shapely()
 
@@ -304,8 +310,11 @@ def _route_net_2layer(
     hole_to_hole: float = geo.get("hole_to_hole_mm", 0.25)
 
     bx1, by1, bx2, by2 = board_bbox
-    # Use full-board window so via candidates aren't artificially restricted
-    window_mm_2l = max(abs(bx2 - bx1), abs(by2 - by1))
+    # Via-search window: default = full board (rescue path needs this because the
+    # fragmented free space after grid routing means the local component may be
+    # too small to find via sites).  max_window_mm lets callers cap this.
+    board_max = max(abs(bx2 - bx1), abs(by2 - by1))
+    window_mm_2l = board_max if max_window_mm is None else min(max_window_mm, board_max)
     wx1 = max(min(pad_a[0], pad_b[0]) - window_mm_2l, bx1)
     wy1 = max(min(pad_a[1], pad_b[1]) - window_mm_2l, by1)
     wx2 = min(max(pad_a[0], pad_b[0]) + window_mm_2l, bx2)
