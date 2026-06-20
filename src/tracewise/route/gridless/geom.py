@@ -346,6 +346,7 @@ def build_windowed_free_space(
     window_bbox: tuple[float, float, float, float],
     board_outline: object | None = None,
     drill_obstacles: list | None = None,
+    layer: int = 0,
 ) -> tuple[object, list]:
     """Build the free-space polygon within *window_bbox* for routing *net_name*.
 
@@ -374,7 +375,7 @@ def build_windowed_free_space(
     ----------
     pads:
         All board pads from ``extract_pads`` (any format with keys ``net``,
-        ``x``, ``y``, ``hw``, ``hh``, ``front``).
+        ``x``, ``y``, ``hw``, ``hh``, ``front``, ``back``).
     net_name:
         The net being routed; its pads are excluded from obstacles and carved
         back into free space.
@@ -397,6 +398,11 @@ def build_windowed_free_space(
         Optional list of pre-inflated Shapely circle Polygons for drill holes
         (through-hole pads and vias).  Each circle is already inflated by
         ``clearance_mm + track_mm / 2``; just test window intersection and add.
+    layer:
+        Routing layer: 0 = F.Cu (default), 1 = B.Cu.  Selects which pads are
+        obstacles — ``p["front"]`` for layer 0, ``p["back"]`` for layer 1.
+        Board-outline clip and drill_obstacles are shared (layer-independent).
+        Default ``0`` preserves byte-identical behaviour for all existing callers.
 
     Returns
     -------
@@ -426,8 +432,15 @@ def build_windowed_free_space(
     for p in pads:
         if p["net"] == net_name:
             continue
-        if not p.get("front"):
-            continue
+        # Layer-aware pad filter: layer 0 = F.Cu (front), layer 1 = B.Cu (back).
+        # Through-hole pads have both front=True and back=True — they appear as
+        # obstacles on both layers, which is correct (copper annulus on both).
+        if layer == 0:
+            if not p.get("front"):
+                continue
+        else:
+            if not p.get("back"):
+                continue
         # Reject pads that don't intersect the window at all
         px1 = p["x"] - p["hw"]
         py1 = p["y"] - p["hh"]
@@ -458,7 +471,11 @@ def build_windowed_free_space(
 
         # Own-pad carve-out (FIX-2): routing net's own pads must remain reachable
         # even if adjacent routed copper overlaps them.
-        own_pads = [p for p in pads if p["net"] == net_name and p.get("front")]
+        # Use the same layer filter as the obstacle pads.
+        own_pads = [
+            p for p in pads
+            if p["net"] == net_name and (p.get("front") if layer == 0 else p.get("back"))
+        ]
         if own_pads:
             own_pad_polys = [
                 box(
@@ -587,3 +604,332 @@ def get_component_containing(free_space: object, pt: tuple[float, float]) -> obj
         # Fallback: largest component
         return max(fs.geoms, key=lambda g: g.area)
     return fs
+
+
+# ---------------------------------------------------------------------------
+# M3: Drill-center extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_drill_centers(board_path: object) -> list[tuple[float, float, float]]:
+    """Extract drill centers and radii from the board.
+
+    Returns a list of ``(cx, cy, drill_r)`` tuples for through-hole pad drills and
+    via drills.  Used by the M3 via-legality predicate 3 (hole-to-hole check).
+
+    Returns ``[]`` if extraction fails or HAVE_SHAPELY is False.
+    """
+    if not HAVE_SHAPELY:
+        return []
+    try:
+        from tracewise.sexpr import parse_file
+
+        root = parse_file(board_path)
+        centers: list[tuple[float, float, float]] = []
+        seen: set[tuple[float, float, float]] = set()
+
+        for fp in root.find_all("footprint"):
+            at_node = fp.first("at")
+            try:
+                fp_x = float(at_node.arg(1)) if at_node else 0.0
+                fp_y = float(at_node.arg(2)) if at_node else 0.0
+            except (TypeError, ValueError):
+                fp_x, fp_y = 0.0, 0.0
+
+            for pad in fp.find_all("pad"):
+                drill_node = pad.first("drill")
+                if drill_node is None:
+                    continue
+                at_pad = pad.first("at")
+                try:
+                    px = float(at_pad.arg(1)) if at_pad else 0.0
+                    py = float(at_pad.arg(2)) if at_pad else 0.0
+                except (TypeError, ValueError):
+                    px, py = 0.0, 0.0
+                cx = fp_x + px
+                cy = fp_y + py
+
+                drill_atoms = drill_node.atoms()
+                try:
+                    if len(drill_atoms) >= 2 and drill_atoms[1].value == "oval":
+                        d = min(float(drill_atoms[2].value), float(drill_atoms[3].value))
+                    else:
+                        d = float(drill_atoms[1].value)
+                except (IndexError, ValueError):
+                    continue
+
+                key = (round(cx, 3), round(cy, 3), round(d / 2.0, 3))
+                if key not in seen:
+                    seen.add(key)
+                    centers.append((cx, cy, d / 2.0))
+
+        # Also collect vias already placed on the board
+        for via in root.find_all("via"):
+            drill_node = via.first("drill")
+            if drill_node is None:
+                continue
+            at_node = via.first("at")
+            try:
+                vx = float(at_node.arg(1)) if at_node else 0.0
+                vy = float(at_node.arg(2)) if at_node else 0.0
+            except (TypeError, ValueError):
+                continue
+            try:
+                d = float(drill_node.arg())
+            except (TypeError, ValueError):
+                continue
+            key = (round(vx, 3), round(vy, 3), round(d / 2.0, 3))
+            if key not in seen:
+                seen.add(key)
+                centers.append((vx, vy, d / 2.0))
+
+        return centers
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# ---------------------------------------------------------------------------
+# M3: Per-component exterior-ring corner collection (THE key fix from spike-M3)
+# ---------------------------------------------------------------------------
+
+
+def exterior_ring_corners(
+    fs: object,
+    start_xy: tuple[float, float],
+    goal_xy: tuple[float, float],
+    margin_mm: float,
+) -> list[tuple[float, float]]:
+    """Extract exterior-ring vertices from MultiPolygon (or Polygon) free space.
+
+    When free space is fragmented by grid copper into a MultiPolygon, obstacles
+    appear on the EXTERIOR boundaries of each polygon fragment (not as interior-ring
+    holes).  This function collects those exterior vertices so the visibility graph
+    has waypoints.  Interior-ring corners are also collected when present.
+
+    Per-COMPONENT collection is critical: it cuts edge-build ~93% vs naively
+    collecting all vertices across all components (the spike measured 964K→64K pairs
+    on a typical post-grid-routing F.Cu fragmentation).  Only components that
+    contain start/goal or legal via sites need their corners as waypoints.
+
+    Parameters
+    ----------
+    fs:
+        Free-space geometry (Polygon or MultiPolygon).
+    start_xy, goal_xy:
+        Route endpoints for the bounding-box filter.
+    margin_mm:
+        Window margin around start→goal bbox.
+
+    Returns
+    -------
+    Sorted list of ``(round(x, 6), round(y, 6))`` corner coordinates.
+    """
+    _require_shapely()
+    sx, sy = start_xy
+    gx, gy = goal_xy
+    x_lo = min(sx, gx) - margin_mm
+    x_hi = max(sx, gx) + margin_mm
+    y_lo = min(sy, gy) - margin_mm
+    y_hi = max(sy, gy) + margin_mm
+
+    pts: set[tuple[float, float]] = set()
+
+    if fs.geom_type == "MultiPolygon":  # type: ignore[union-attr]
+        components = list(fs.geoms)  # type: ignore[union-attr]
+    else:
+        components = [fs]
+
+    for comp in components:
+        # Interior ring vertices (holes = obstacles in single-polygon free space)
+        for ring in comp.interiors:  # type: ignore[union-attr]
+            for x, y in ring.coords:
+                if x_lo <= x <= x_hi and y_lo <= y <= y_hi:
+                    pts.add((round(x, 6), round(y, 6)))
+        # Exterior ring vertices (obstacle boundaries in fragmented free space)
+        for x, y in comp.exterior.coords:  # type: ignore[union-attr]
+            if x_lo <= x <= x_hi and y_lo <= y <= y_hi:
+                pts.add((round(x, 6), round(y, 6)))
+
+    return sorted(pts)
+
+
+# ---------------------------------------------------------------------------
+# M3: Candidate via sites
+# ---------------------------------------------------------------------------
+
+def _round1nm_geom(v: float) -> float:
+    """Snap to 1nm grid (used in M3 via-site generation)."""
+    return round(v * 1e6) / 1e6
+
+
+def candidate_via_sites(
+    fs_F: object,
+    fs_B: object,
+    start_xy: tuple[float, float],
+    goal_xy: tuple[float, float],
+    window_bbox: tuple[float, float, float, float],
+    via_mm: float,
+    clearance_mm: float,
+) -> list[tuple[float, float]]:
+    """Collect candidate via sites for a 2-layer route.
+
+    Three sources (all sorted for determinism):
+    1. **Grid-sample** each F.Cu component that intersects B.Cu free space at
+       pitch = ``via_mm + clearance_mm``.  Handles the typical post-grid-routing
+       case where F.Cu is a fragmented MultiPolygon with disconnected islands.
+    2. **Shared obstacle corners** — interior-ring vertices present on BOTH
+       layers at equal 1 nm coords.
+    3. **Straight lattice** every ``via_mm + clearance_mm`` along start→goal.
+
+    Returns
+    -------
+    Sorted ``[(round(x, 6), round(y, 6)), ...]`` candidate via positions.
+    """
+    _require_shapely()
+    import math as _math
+
+    wx1, wy1, wx2, wy2 = window_bbox
+    via_pitch = via_mm + clearance_mm
+
+    all_sites: set[tuple[float, float]] = set()
+
+    # 1. Grid-sample each F.Cu component that intersects B.Cu free space
+    if fs_F.geom_type == "MultiPolygon":  # type: ignore[union-attr]
+        f_components = list(fs_F.geoms)  # type: ignore[union-attr]
+    else:
+        f_components = [fs_F]
+
+    for comp in f_components:
+        if not comp.intersects(fs_B):  # type: ignore[union-attr]
+            continue
+        cx1, cy1, cx2, cy2 = comp.bounds
+        x = cx1
+        while x <= cx2 + 1e-9:
+            y = cy1
+            while y <= cy2 + 1e-9:
+                site = (_round1nm_geom(x), _round1nm_geom(y))
+                if wx1 <= site[0] <= wx2 and wy1 <= site[1] <= wy2:
+                    sp = Point(site[0], site[1])
+                    if comp.contains(sp) and fs_B.contains(sp):  # type: ignore[union-attr]
+                        all_sites.add(site)
+                y += via_pitch
+            x += via_pitch
+
+    # 2. Shared obstacle corners (interior-ring vertices on both layers)
+    def _ring_corners(fs_geom: object) -> set[tuple[float, float]]:
+        corners: set[tuple[float, float]] = set()
+        if fs_geom.geom_type == "MultiPolygon":  # type: ignore[union-attr]
+            comps = list(fs_geom.geoms)  # type: ignore[union-attr]
+        else:
+            comps = [fs_geom]
+        for c in comps:
+            for ring in c.interiors:  # type: ignore[union-attr]
+                for x, y in ring.coords:
+                    if wx1 <= x <= wx2 and wy1 <= y <= wy2:
+                        corners.add((_round1nm_geom(x), _round1nm_geom(y)))
+        return corners
+
+    corners_F = _ring_corners(fs_F)
+    corners_B = _ring_corners(fs_B)
+    all_sites |= (corners_F & corners_B)
+
+    # 3. Straight lattice along start→goal
+    ax, ay = start_xy
+    bx, by = goal_xy
+    dist = _math.hypot(bx - ax, by - ay)
+    if dist > 1e-9:
+        n_steps = max(1, int(_math.ceil(dist / via_pitch)))
+        for i in range(n_steps + 1):
+            t = i / n_steps if n_steps > 0 else 0.5
+            x = _round1nm_geom(ax + t * (bx - ax))
+            y = _round1nm_geom(ay + t * (by - ay))
+            if wx1 <= x <= wx2 and wy1 <= y <= wy2:
+                all_sites.add((x, y))
+
+    return sorted(all_sites, key=lambda p: (round(p[0], 6), round(p[1], 6)))
+
+
+# ---------------------------------------------------------------------------
+# M3: Three-predicate hole-aware via legality test
+# ---------------------------------------------------------------------------
+
+
+def is_legal_via(
+    site: tuple[float, float],
+    fs_F: object,
+    fs_B: object,
+    pads: list[dict],
+    net_name: str,
+    via_mm: float,
+    via_drill: float,
+    clearance_mm: float,
+    hole_clearance: float,
+    hole_to_hole: float,
+    drill_centers: list[tuple[float, float, float]],
+    window_bbox: tuple[float, float, float, float],
+) -> tuple[bool, str]:
+    """Test if a candidate via site passes all three DQ4 predicates.
+
+    Returns ``(is_legal, fail_reason)``; ``fail_reason`` is ``""`` if legal.
+
+    Predicates (all three must pass; short-circuit on first fail):
+
+    1. **Copper-ring clearance, both layers** — a disc of radius
+       ``via_mm/2 + clearance_mm`` centred at *site* must lie within the
+       free space on both F.Cu and B.Cu.  Because the per-layer free space
+       already has all other-net copper subtracted (inflated by
+       ``clearance + track/2``), this is the via-copper-clearance check by
+       construction — legality-by-construction, no post-hoc nudge.
+
+    2. **Drill-to-copper clearance** (the LARGER ``hole_clearance`` — the #4/M2.1
+       lesson) — a disc of radius ``via_drill/2 + hole_clearance`` must not
+       intersect any other-net pad copper on either layer.  ``hole_clearance``
+       (~0.25 mm) is larger than ``clearance_mm`` (~0.15–0.2 mm); honoring
+       only copper clearance was the boxed-in-via bug.
+
+    3. **Drill-to-drill spacing** — for every existing drill center *c*,
+       ``dist(site, c) ≥ via_drill/2 + drill_r(c) + hole_to_hole``.
+    """
+    _require_shapely()
+    import math as _math
+
+    x, y = site
+    sp = Point(x, y)
+
+    # Predicate 1: copper ring disc within free space on both layers
+    copper_disc = snap(sp.buffer(via_mm / 2.0 + clearance_mm, resolution=16))
+    if not copper_disc.within(fs_F):  # type: ignore[union-attr]
+        return False, "pred1_fcu_copper_ring"
+    if not copper_disc.within(fs_B):  # type: ignore[union-attr]
+        return False, "pred1_bcu_copper_ring"
+
+    # Predicate 2: drill disc clearance to other-net copper (hole_clearance > clearance)
+    drill_disc = snap(sp.buffer(via_drill / 2.0 + hole_clearance, resolution=16))
+    wx1, wy1, wx2, wy2 = window_bbox
+    for lyr_idx in [0, 1]:
+        for p in pads:
+            if p["net"] == net_name:
+                continue
+            if lyr_idx == 0 and not p.get("front"):
+                continue
+            if lyr_idx == 1 and not p.get("back"):
+                continue
+            px1 = p["x"] - p["hw"]
+            py1 = p["y"] - p["hh"]
+            px2 = p["x"] + p["hw"]
+            py2 = p["y"] + p["hh"]
+            if px2 < wx1 or px1 > wx2 or py2 < wy1 or py1 > wy2:
+                continue
+            # Check if drill disc intersects pad copper (raw copper, no inflation)
+            pad_rect = box(px1, py1, px2, py2)
+            if drill_disc.intersects(pad_rect):
+                return False, f"pred2_drill_to_copper_layer{lyr_idx}"
+
+    # Predicate 3: drill-to-drill spacing
+    for cx, cy, drill_r in drill_centers:
+        dist = _math.hypot(x - cx, y - cy)
+        required = via_drill / 2.0 + drill_r + hole_to_hole
+        if dist < required - 1e-6:
+            return False, f"pred3_drill_to_drill (dist={dist:.4f}<{required:.4f})"
+
+    return True, ""

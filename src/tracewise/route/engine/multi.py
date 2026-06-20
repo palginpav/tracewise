@@ -193,6 +193,8 @@ def _route_net_gridless_wrapped(grid: Grid, net: Net, kwargs: dict) -> NetRoute:
     board_outline = kwargs.get("board_outline")
     drill_obstacles = kwargs.get("drill_obstacles")
 
+    drill_centers = kwargs.get("drill_centers") or []
+
     result = route_net_gridless(
         pad_a=pad_a,
         pad_b=pad_b,
@@ -203,12 +205,15 @@ def _route_net_gridless_wrapped(grid: Grid, net: Net, kwargs: dict) -> NetRoute:
         extra_obstacles=extra_obstacles,
         board_outline=board_outline,
         drill_obstacles=drill_obstacles,
+        drill_centers=drill_centers,
+        allow_via=True,
     )
 
     if not result.ok:
         return NetRoute(net=net, ok=False, reason=result.reason)
 
-    nr = to_gridless_netroute(net, result.world_paths, grid)
+    nr = to_gridless_netroute(net, result.world_paths, grid,
+                              world_vias=result.world_vias)
 
     # Accumulate Shapely obstacles for subsequent gridless nets in this run.
     # Buffer each world segment by track_mm/2 + clearance_mm (FIX-6).
@@ -376,7 +381,10 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                     _gridless_pre_routed.add(net_name)
                     if neg_res.ok and neg_res.world_paths:
                         # Wrap in GridlessNetRoute, rasterize, mark grid ledger
-                        nr = to_gridless_netroute(net, neg_res.world_paths, grid)
+                        nr = to_gridless_netroute(
+                            net, neg_res.world_paths, grid,
+                            world_vias=neg_res.world_vias,
+                        )
                         _mark(grid, nr, 1)
                         results[net_name] = nr
                     else:
@@ -559,14 +567,62 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                         drill_obstacles=combined_drill_obs,
                     )
 
+                    # M3: geometry-blocked nets get a direct 2-layer via rescue
+                    # attempt via route_net_gridless(allow_via=True).
+                    geom_blocked_candidates = []
+
                     for net_name, neg_res in rescue_results.items():
                         net = by_name_all.get(net_name)
                         if net is None:
                             continue
                         if neg_res.ok and neg_res.world_paths:
-                            nr = to_gridless_netroute(net, neg_res.world_paths, grid)
+                            nr = to_gridless_netroute(
+                                net, neg_res.world_paths, grid,
+                                world_vias=neg_res.world_vias,
+                            )
                             _mark(grid, nr, 1)
                             results[net_name] = nr
-                        # Geometry-blocked or failed: leave existing failure entry
+                        elif neg_res.status == "geometry_blocked":
+                            # Collect for 2-layer via rescue below
+                            entry = next(
+                                (c for c in rescue_candidates
+                                 if c["net_name"] == net_name),
+                                None,
+                            )
+                            if entry is not None:
+                                geom_blocked_candidates.append(entry)
+
+                    # M3 2-layer pass: try route_net_gridless(allow_via=True) for
+                    # geometry-blocked nets.  Extra track obstacles from the now-
+                    # complete rescue pass are already in combined_drill_obs.
+                    if geom_blocked_candidates:
+                        from tracewise.route.gridless.route import route_net_gridless
+
+                        drill_centers = gk.get("drill_centers") or []
+                        for entry in geom_blocked_candidates:
+                            net_name = entry["net_name"]
+                            net = by_name_all.get(net_name)
+                            if net is None:
+                                continue
+                            result_2l = route_net_gridless(
+                                pad_a=entry["pad_a"],
+                                pad_b=entry["pad_b"],
+                                pads=pads,
+                                net_name=net_name,
+                                geo=geo,
+                                board_bbox=board_bbox,
+                                extra_obstacles=track_obs,
+                                board_outline=neg_board_outline,
+                                drill_obstacles=combined_drill_obs,
+                                drill_centers=drill_centers,
+                                allow_via=True,
+                            )
+                            if result_2l.ok and result_2l.world_paths:
+                                nr = to_gridless_netroute(
+                                    net, result_2l.world_paths, grid,
+                                    world_vias=result_2l.world_vias,
+                                )
+                                _mark(grid, nr, 1)
+                                results[net_name] = nr
 
     return results

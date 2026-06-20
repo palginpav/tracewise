@@ -13,3 +13,5 @@ dist/
 *.log
 runs/
 .spike1_tmp/
+.spikeM3_tmp/
+.m2_gate_tmp/

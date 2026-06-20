@@ -43,20 +43,33 @@ class GridlessNetRoute(NetRoute):
     Extra fields
     ------------
     world_paths:
-        List of path segments.  Each segment is a list of ``(x_mm, y_mm)``
-        waypoints for F.Cu (single-layer Phase 1; Phase 3 adds ``layer``).
+        List of path segments.  Each segment is a list of waypoints.  For
+        single-layer routes: ``[(x_mm, y_mm), ...]`` (2-tuples).  For 2-layer
+        routes (M3): ``[(x_mm, y_mm, layer), ...]`` (3-tuples, ``layer ∈ {0,1}``).
         ``emit_routes`` writes these directly, bypassing ``grid.to_world``.
+    world_vias:
+        Via centre positions for 2-layer routes: ``[(x_mm, y_mm), ...]``.
+        Empty for single-layer routes.  ``emit_routes`` emits one KiCad ``via``
+        node per entry.  ``rasterize_into_grid`` marks both layers around each
+        via so subsequent grid-routed nets see the via copper.
     """
 
-    # World-mm centerlines: [ [(x, y), ...], ... ] per path segment
-    world_paths: list[list[tuple[float, float]]] = field(default_factory=list)
+    # World-mm centerlines: [ [(x, y), ...] or [(x, y, layer), ...], ... ]
+    world_paths: list[list[tuple]] = field(default_factory=list)
+    # Via centres for 2-layer routes: [(x_mm, y_mm), ...]
+    world_vias: list[tuple[float, float]] = field(default_factory=list)
 
     def rasterize_into_grid(self, grid: Grid) -> None:
-        """Populate ``self.cells`` from ``self.world_paths``.
+        """Populate ``self.cells`` from ``self.world_paths`` and ``self.world_vias``.
 
         Walk each segment of each world path, rasterize it to the grid cells it
         occupies (Bresenham-style: sample every ``pitch/2`` along the segment to
-        ensure no cell is skipped), and collect the set.
+        ensure no cell is skipped), and collect the set.  Handles both
+        2-tuple ``(x, y)`` waypoints (single-layer) and 3-tuple ``(x, y, layer)``
+        waypoints (2-layer M3 routes).
+
+        Via sites are rasterized onto both layers (0 and 1) so subsequent
+        grid-routed nets see the via copper as occupied cells.
 
         Inflation is **not** applied here — ``_mark`` applies the
         ``halfwidth_cells`` box inflation when writing to ``grid.cells``.  This
@@ -66,10 +79,25 @@ class GridlessNetRoute(NetRoute):
         Already-populated ``cells`` are replaced, not appended (idempotent call).
         """
         cells: set[tuple[int, int, int]] = set()
-        layer = 0  # Phase 1: F.Cu only
 
         for path in self.world_paths:
-            for (x0, y0), (x1, y1) in zip(path, path[1:], strict=False):
+            for wa, wb in zip(path, path[1:], strict=False):
+                # Support both 2-tuples (x, y) and 3-tuples (x, y, layer)
+                if len(wa) == 3:
+                    x0, y0, layer_a = wa
+                else:
+                    x0, y0 = wa
+                    layer_a = 0
+                if len(wb) == 3:
+                    x1, y1, _layer_b = wb
+                else:
+                    x1, y1 = wb
+
+                # Skip via-transition waypoints (same position, different layer)
+                if abs(x0 - x1) < 1e-9 and abs(y0 - y1) < 1e-9:
+                    continue
+
+                layer = layer_a  # use the layer of the starting waypoint
                 # Sample along the segment at sub-pitch intervals so that no
                 # grid cell is skipped.  pitch/2 guarantees coverage.
                 seg_len = math.hypot(x1 - x0, y1 - y0)
@@ -86,13 +114,20 @@ class GridlessNetRoute(NetRoute):
                     iy, ix = grid.to_cell(x, y)
                     cells.add((layer, *grid.clamp_cell(iy, ix)))
 
+        # Rasterize via sites onto BOTH layers so grid-routed nets avoid via copper
+        for vx, vy in self.world_vias:
+            iy, ix = grid.to_cell(vx, vy)
+            for lyr in (0, 1):
+                cells.add((lyr, *grid.clamp_cell(iy, ix)))
+
         self.cells = cells
 
 
 def to_gridless_netroute(
     net: Net,
-    world_paths: list[list[tuple[float, float]]],
+    world_paths: list[list[tuple]],
     grid: Grid,
+    world_vias: list[tuple[float, float]] | None = None,
 ) -> GridlessNetRoute:
     """Build a ``GridlessNetRoute`` from a successfully-routed gridless result.
 
@@ -101,16 +136,26 @@ def to_gridless_netroute(
     net:
         The ``Net`` object (provides ``halfwidth_cells``, ``via_halfwidth_cells``).
     world_paths:
-        World-mm centerlines from ``GridlessRouteResult.world_paths``.
+        World-mm centerlines from ``GridlessRouteResult.world_paths``.  May
+        contain 2-tuples ``(x, y)`` (single-layer) or 3-tuples ``(x, y, layer)``
+        (2-layer M3 routes).
     grid:
         The shared occupancy grid (used for rasterization and coordinate mapping).
+    world_vias:
+        Via centre positions from ``GridlessRouteResult.world_vias``.  When
+        provided, each via is rasterized onto both grid layers so subsequent
+        grid-routed nets see the via copper.  Defaults to ``[]``.
 
     Returns
     -------
     A ``GridlessNetRoute`` with ``ok=True``, ``world_paths`` set, and ``cells``
-    populated by ``rasterize_into_grid``.  ``via_sites`` is empty (Phase 1:
-    single-layer, no vias).
+    populated by ``rasterize_into_grid``.
     """
-    nr = GridlessNetRoute(net=net, ok=True, world_paths=world_paths)
+    nr = GridlessNetRoute(
+        net=net,
+        ok=True,
+        world_paths=world_paths,
+        world_vias=world_vias or [],
+    )
     nr.rasterize_into_grid(grid)
     return nr

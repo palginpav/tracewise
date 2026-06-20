@@ -59,7 +59,8 @@ class GridlessSetNetResult:
     distinguish the M3-quarantine case from routing failures.
     """
     ok: bool
-    world_paths: list[list[tuple[float, float]]] = field(default_factory=list)
+    world_paths: list[list[tuple]] = field(default_factory=list)
+    world_vias: list[tuple[float, float]] = field(default_factory=list)
     status: str = ""          # "routed" | "geometry_blocked" | "failed"
     reason: str = ""
     stats: dict = field(default_factory=dict)

@@ -177,18 +177,40 @@ def emit_routes(
         # re-snap.  Grid nets continue through the existing resolved-map path.
         # ------------------------------------------------------------------
         if isinstance(nr, GridlessNetRoute) and nr.world_paths:
-            layer = layer_name[0]  # Phase 1: F.Cu only
             for wpath in nr.world_paths:
                 if len(wpath) < 2:
                     continue
-                for (xa, ya), (xb, yb) in zip(wpath, wpath[1:], strict=False):
+                for wa, wb in zip(wpath, wpath[1:], strict=False):
+                    # Support 2-tuples (x,y) and 3-tuples (x,y,layer) — M3
+                    if len(wa) == 3:
+                        xa, ya, la = wa
+                    else:
+                        xa, ya = wa
+                        la = 0
+                    if len(wb) == 3:
+                        xb, yb, _lb = wb
+                    else:
+                        xb, yb = wb
+                    # Skip via-transition waypoints (same position, layer change)
+                    if abs(xa - xb) < 1e-9 and abs(ya - yb) < 1e-9:
+                        continue
+                    seg_layer = layer_name[la]
                     root.insert(node("segment",
                         node("start", f"{xa:.3f}", f"{ya:.3f}"),
                         node("end", f"{xb:.3f}", f"{yb:.3f}"),
                         node("width", str(track_mm)),
-                        node("layer", atom(layer, quote=True)),
+                        node("layer", atom(seg_layer, quote=True)),
                         net_atom(name)))
                     segs += 1
+            # Emit via nodes from world_vias (M3: 2-layer routes)
+            for vx, vy in getattr(nr, "world_vias", []):
+                root.insert(node("via",
+                    node("at", f"{vx:.3f}", f"{vy:.3f}"),
+                    node("size", str(via_mm)),
+                    node("drill", str(via_drill_mm)),
+                    node("layers", atom("F.Cu", quote=True), atom("B.Cu", quote=True)),
+                    net_atom(name)))
+                vias += 1
             continue  # done with this net; skip the grid resolved-map path
 
         net_vias: set[tuple[float, float]] = set()
@@ -334,11 +356,34 @@ def emit_routes(
 def project_geometry(board: str | Path) -> dict:
     """Track/clearance/via geometry from the project's own rules (fallbacks
     are conservative). Routing with fatter-than-project geometry costs real
-    completion on dense boards — measured, not theoretical."""
+    completion on dense boards — measured, not theoretical.
+
+    M3 additions
+    ------------
+    ``hole_clearance_mm`` (default 0.25): the LARGER drill-to-copper clearance
+    used by the M3 via legality predicate 2.  Sourced from
+    ``min_hole_clearance`` in design_settings.rules; falls back to 0.25 mm.
+
+    ``hole_to_hole_mm`` (default 0.25): minimum drill-to-drill spacing (edge
+    to edge of drill cylinders).  Sourced from ``min_hole_to_hole`` in
+    design_settings.rules; falls back to 0.25 mm.
+
+    ``via_cost_mm`` (default 3.0): A* cost for a cross-layer via transition,
+    in mm equivalent.  Not directly in .kicad_pro; kept as a routing policy
+    constant here so callers have a single source of truth.
+    """
     import json as _json
 
-    geo = {"track_mm": 0.2, "clearance_mm": 0.2, "via_mm": 0.6, "via_drill_mm": 0.3,
-           "min_track_mm": 0.1}
+    geo = {
+        "track_mm": 0.2,
+        "clearance_mm": 0.2,
+        "via_mm": 0.6,
+        "via_drill_mm": 0.3,
+        "min_track_mm": 0.1,
+        "hole_clearance_mm": 0.25,
+        "hole_to_hole_mm": 0.25,
+        "via_cost_mm": 3.0,
+    }
     pro = Path(board).with_suffix(".kicad_pro")
     if pro.exists():
         try:
@@ -349,6 +394,10 @@ def project_geometry(board: str | Path) -> dict:
                 geo["min_track_mm"] = geo["track_mm"]
             if rules.get("min_clearance"):
                 geo["clearance_mm"] = max(float(rules["min_clearance"]), 0.1)
+            if rules.get("min_hole_clearance"):
+                geo["hole_clearance_mm"] = max(float(rules["min_hole_clearance"]), 0.1)
+            if rules.get("min_hole_to_hole"):
+                geo["hole_to_hole_mm"] = max(float(rules["min_hole_to_hole"]), 0.0)
             for c in data.get("net_settings", {}).get("classes", []):
                 if c.get("name") == "Default":
                     if c.get("via_diameter"):
@@ -461,6 +510,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
             )
         from tracewise.route.gridless.geom import (
             extract_board_outline,
+            extract_drill_centers,
             extract_drill_obstacles,
         )
         bd = data["board"]
@@ -473,6 +523,9 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
             clearance_mm=geo["clearance_mm"],
             track_mm=geo["track_mm"],
         )
+        # Extract drill centre list for M3 via legality predicate 3
+        # (drill-to-drill spacing check).
+        _drill_centers = extract_drill_centers(board)
         gridless_kwargs = {
             "pads": data["pads"],
             "geo": geo,
@@ -481,6 +534,7 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
             "extra_gridless_obstacles": [],
             "board_outline": _board_outline,
             "drill_obstacles": _drill_obstacles,
+            "drill_centers": _drill_centers,
         }
 
     if engine == "pathfinder":

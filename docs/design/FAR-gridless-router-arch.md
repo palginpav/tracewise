@@ -1568,3 +1568,34 @@ edges; per-component exterior vertices fix it AND cut the edge-build ~93% (964K�
 **M3 core via mechanism is GO.** Next: M3-P1 — promote 2-layer + legal-via into the production package
 (`route_net_gridless`/`route_gridless_set` layer-aware) and route all 4 geometry-blocked QSPI nets via
 `gridless_rescue`, then the M3 scorecard gate.
+
+---
+
+## M3-P1 (2026-06-20) — 2-layer via mechanism INTEGRATED; rescue-path connectivity gate NOT met
+
+The Spike-M3 2-layer+via logic is promoted into the production package: `build_windowed_free_space`
+gains a `layer` param; `geom` gets candidate-via-sites + the 3-predicate legal-via test; `search` gets
+2-layer A* (node=(x,y,layer), cross-layer via edges at via_cost) + per-component exterior-ring corners;
+`route_net_gridless`/`route_gridless_set` attempt a 2-layer route before quarantining; `GridlessNetRoute`
+carries per-segment layer + via centers; `emit_routes` emits B.Cu segments + `(via ...)`. 368 tests
+green, ruff clean. `gridless_rescue/negotiate=False` byte-identical to pre-M3.
+
+**Honest gate result — controlled A/B (`scripts/_verify_m3_ab.py`, canonical method, grid-only vs
+`gridless_rescue=True`):**
+- grid-only **48/89**; rescue=True **48/89 — IDENTICAL. 0 QSPI nets rescued.** No via-hole regression
+  (hole_clearance 32→32, hole_to_hole 14→14). **Connectivity gate (unconnected < 48) NOT met.**
+
+**Root cause:** grid-only leaves `/QSPI_SCLK` + `/QSPI_SD2` unconnected. The grid-FIRST rescue then
+tries exactly those — but the grid greedily walled off their corridors with its own copper, so even
+2-layer vias find no gap (boxed-in-under-congestion; the #4 risk at the deployment level). The Spike-M3
+success (`/QSPI_SD0` in isolation) is real, but full-board the rescue candidates are blocked by grid copper.
+
+**The deployment-strategy insight:** M2's gridless-FIRST `negotiate` path already reaches **45**
+unconnected with the QSPI subset — BETTER than grid-first rescue's 48 — because it claims corridors
+BEFORE the grid does. So the via mechanism is sound; the rescue-AFTER-grid strategy is what fails on
+these nets.
+
+**Next (M3-P1.1, strategy not mechanism):** route the geometry-blocked QSPI nets gridless-FIRST (the
+2-layer-capable `negotiate` path) rather than rescue-after — re-measure unconnected. If still blocked,
+the deeper fix is cross-substrate rip-up (rescue rips grid tracks that wall it off). The committed M3
+mechanism is the foundation for both. (Do NOT claim a connectivity gain until A/B shows unc < 48.)
