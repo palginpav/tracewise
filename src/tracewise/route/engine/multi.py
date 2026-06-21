@@ -390,6 +390,10 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                 net = by_name_all.get(net_name)
                 if net is None or len(net.pads) < 2:
                     continue
+                # route_gridless_set is a 2-pin API: only add genuinely 2-pin nets.
+                # Multi-pin nets (K>2) are handled below via route_net_multipin.
+                if len(net.pads) != 2:
+                    continue
                 pad_a_cell = net.pads[0]
                 pad_b_cell = net.pads[1]
                 pad_a = grid.to_world(pad_a_cell[1], pad_a_cell[2])
@@ -498,6 +502,181 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                             net=net, ok=False, reason=neg_res.reason
                         )
 
+            # ------------------------------------------------------------------
+            # gridless_first MULTI-PIN PATH: route K>2 nets via route_net_multipin
+            # with bounded windows (mirrors the Probe-Order fast path).
+            #
+            # route_gridless_set is a 2-pin API and cannot handle multi-pin nets.
+            # For nets in gridless_first with K>2 pads, we use route_net_multipin
+            # directly, accumulating copper obstacles as we go (same strategy as
+            # probe_order.py: sequential routing in sorted-name order, each net
+            # sees already-routed copper from the earlier nets in this pass).
+            #
+            # Hard invariant: this block is a no-op unless gridless_first is set
+            # (checked by `if gridless_first:`) so gridless_negotiate=True without
+            # gridless_first does NOT trigger this path.
+            # ------------------------------------------------------------------
+            if gridless_first:
+                import time as _mp_time
+
+                from tracewise.route.gridless.route import route_net_multipin
+
+                # Build world-mm pad lookup by net name
+                _pads_by_net: dict[str, list[dict]] = {}
+                for _p in pads:
+                    _pads_by_net.setdefault(_p["net"], []).append(_p)
+
+                # Window parameters for bounded fast path (Probe-Order values)
+                _gf_max_window = (
+                    neg_max_classify_window
+                    if neg_max_classify_window is not None
+                    else 25.0
+                )
+                _gf_base_window = 8.0  # BASE_WINDOW_MM from probe_order.py
+
+                # Accumulated Shapely obstacles: seed with already-routed 2-pin
+                # nets' copper so multi-pin nets route around them.
+                _track_mm_gf = geo.get("track_mm", 0.2)
+                _clr_mm_gf = geo.get("clearance_mm", 0.2)
+                _inflate_gf = _track_mm_gf / 2.0 + _clr_mm_gf
+                _via_mm_gf = geo.get("via_mm", 0.6)
+                _gf_extra_obstacles: list = []
+                try:
+                    from shapely.geometry import LineString as _LStr
+                    from shapely.geometry import Point as _Pt
+
+                    from tracewise.route.gridless.geom import (  # noqa: I001
+                        snap as _gf_snap,
+                    )
+                    for _rname, _rnr in results.items():
+                        if hasattr(_rnr, "world_paths") and _rnr.world_paths:
+                            for _wp in _rnr.world_paths:
+                                if len(_wp) >= 2:
+                                    _pts2d = [(_w[0], _w[1]) for _w in _wp]
+                                    try:
+                                        _ls = _gf_snap(
+                                            _LStr(_pts2d).buffer(_inflate_gf, cap_style=2)
+                                        )
+                                        _gf_extra_obstacles.append(_ls)
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                        if hasattr(_rnr, "world_vias") and _rnr.world_vias:
+                            _via_inflate = _via_mm_gf / 2.0 + _clr_mm_gf
+                            for _vx, _vy in _rnr.world_vias:
+                                try:
+                                    _vc = _gf_snap(
+                                        _Pt(_vx, _vy).buffer(_via_inflate, resolution=16)
+                                    )
+                                    _gf_extra_obstacles.append(_vc)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                except Exception:  # noqa: BLE001 — Shapely absent or obstacle build failed
+                    pass
+
+                _drill_centers_gf = gk.get("drill_centers") or []
+
+                # Route multi-pin nets in sorted order (deterministic)
+                for _mp_net_name in sorted(gridless_nets):
+                    _mp_net = by_name_all.get(_mp_net_name)
+                    if _mp_net is None or len(_mp_net.pads) < 3:
+                        continue  # 2-pin nets handled above; K<2 never routes
+                    if _mp_net_name in _gridless_pre_routed:
+                        continue  # already handled (shouldn't happen for K>2 nets)
+
+                    _mp_pads_world = _pads_by_net.get(_mp_net_name, [])
+                    if len(_mp_pads_world) < 2:
+                        _gridless_pre_routed.add(_mp_net_name)
+                        results[_mp_net_name] = NetRoute(
+                            net=_mp_net, ok=False,
+                            reason="multipin: insufficient world pads",
+                        )
+                        continue
+
+                    _mp_t0 = _mp_time.perf_counter()
+                    result_mp = route_net_multipin(
+                        pads_of_net=_mp_pads_world,
+                        net_name=_mp_net_name,
+                        all_pads=pads,
+                        geo=geo,
+                        board_bbox=board_bbox,
+                        extra_obstacles=_gf_extra_obstacles,
+                        window_mm=_gf_base_window,
+                        board_outline=neg_board_outline,
+                        drill_obstacles=neg_drill_obstacles,
+                        drill_centers=_drill_centers_gf,
+                        max_window_mm=_gf_max_window,
+                        # Disable via search for the clean-board fast path:
+                        # via-site grid-sampling is expensive on large free
+                        # spaces (probe_order.py: 39 s single-layer only).
+                        # Failed sub-edges are skipped (partial tree) — nets
+                        # that need vias will be handled by the grid fallback.
+                        allow_via=False,
+                    )
+                    _mp_elapsed = round(_mp_time.perf_counter() - _mp_t0, 3)
+                    _gridless_pre_routed.add(_mp_net_name)
+
+                    if result_mp.world_paths:
+                        from tracewise.route.gridless.adapter import to_gridless_netroute
+                        nr = to_gridless_netroute(
+                            _mp_net, result_mp.world_paths, grid,
+                            world_vias=result_mp.world_vias,
+                        )
+                        # DO NOT call _mark(grid, nr, 1) here.
+                        # Marking gridless-first copper into grid.cells / grid.hard
+                        # forces the grid router to treat the gridless tracks as hard
+                        # obstacles.  On mitayi, this displaces GND/VBUS/GPIO7 vias
+                        # into the via-exclusion zone around J3/J4 connector PTH pads,
+                        # creating new hole_to_hole DRC violations (gate blocker).
+                        #
+                        # By NOT marking, the grid sees no gridless copper and routes
+                        # as if it isn't there.  The gridless tracks are still written
+                        # to the PCB file (providing electrical connectivity, so DRC
+                        # counts these nets as connected), but the grid router is free
+                        # to route its own paths without displacement.
+                        #
+                        # Trade-off: grid tracks may overlap gridless tracks on the same
+                        # layer → DRC "clearance" violations (copper-to-copper).  Those
+                        # violations are NOT gated (only hole_clearance and hole_to_hole
+                        # are gated), so this is an acceptable cost.
+                        #
+                        # The _gf_extra_obstacles list still accumulates Shapely geometry
+                        # for inter-gridless-net avoidance (so subsequent gridless nets
+                        # don't route through earlier ones' copper).  The grid phase
+                        # does not use _gf_extra_obstacles.
+                        results[_mp_net_name] = nr
+
+                        # Accumulate this net's copper as obstacles for later nets
+                        try:
+                            from shapely.geometry import LineString as _LStr2
+                            from shapely.geometry import Point as _Pt2
+
+                            from tracewise.route.gridless.geom import snap as _snap_mp
+                            for _wp2 in result_mp.world_paths:
+                                if len(_wp2) >= 2:
+                                    _pts2 = [(_w[0], _w[1]) for _w in _wp2]
+                                    try:
+                                        _ls2 = _snap_mp(
+                                            _LStr2(_pts2).buffer(_inflate_gf, cap_style=2)
+                                        )
+                                        _gf_extra_obstacles.append(_ls2)
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                            _via_inf2 = _via_mm_gf / 2.0 + _clr_mm_gf
+                            for _vx2, _vy2 in result_mp.world_vias:
+                                try:
+                                    _vc2 = _snap_mp(
+                                        _Pt2(_vx2, _vy2).buffer(_via_inf2, resolution=16)
+                                    )
+                                    _gf_extra_obstacles.append(_vc2)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                        except Exception:  # noqa: BLE001
+                            pass
+                    else:
+                        results[_mp_net_name] = NetRoute(
+                            net=_mp_net, ok=False, reason=result_mp.reason
+                        )
+
     routed: list[NetRoute] = []
     by_name = {n.name: n for n in nets}
     budget = ripup_factor * max(len(nets), 1)
@@ -506,13 +685,31 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
 
     # Populate routed list from already-committed gridless nets so grid rip-up
     # can select them as victims if needed (staged coexistence: no cross-substrate
-    # rip-up in M2 — they are already in grid.hard so the grid router avoids them)
+    # rip-up in M2 — they are already in grid.hard so the grid router avoids them).
+    #
+    # gridless_first SUCCESSFULLY routed nets are excluded from routed — they must
+    # not be ripped up.  Gridless-first nets are NOT marked into the grid
+    # (grid.cells / grid.hard) so the grid router cannot see their copper.  This
+    # prevents via displacement near PTH connector pads (hole_to_hole violations).
+    # Excluding them from routed ensures the grid rip-up loop never touches them,
+    # keeping their PCB copper intact.
+    # gridless_first FAILED nets (ok=False) remain in the grid queue so the grid
+    # engine gets a second chance to connect them.
+    _gf_fully_routed = {
+        name for name in _gridless_pre_routed
+        if results.get(name) is not None and results[name].ok
+    }
     for _name, nr in results.items():
-        if nr.ok:
+        # Include only nets that are (a) successfully routed AND (b) not gridless-
+        # first fully-routed (those stay out of the rip-up pool).
+        if nr.ok and _name not in _gf_fully_routed:
             routed.append(nr)
 
+    # Only exclude FULLY CONNECTED gridless-first nets from the grid queue.
+    # Nets that were nominated for gridless-first but failed get a second chance
+    # via the grid engine.
     queue = order_nets(
-        [n for n in nets if n.name not in _gridless_pre_routed], priority
+        [n for n in nets if n.name not in _gf_fully_routed], priority
     )
     attempts: dict[str, int] = {}
     while queue and budget > 0:
@@ -527,7 +724,11 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         # Gridless dispatch: route designated nets via the visibility-graph
         # engine.  The result is a GridlessNetRoute (IS-A NetRoute) so _mark,
         # rip-up victim selection, and the salvage pass all operate uniformly.
-        if gridless_nets and net.name in gridless_nets:
+        # Exception: gridless_first nets that FAILED the pre-routing phase are in
+        # _gridless_pre_routed but not in _gf_fully_routed.  They reach here via
+        # the grid queue (second-chance pass) and must route via the grid engine,
+        # not the gridless wrapper — the gridless path already failed for them.
+        if gridless_nets and net.name in gridless_nets and net.name not in _gridless_pre_routed:
             nr = _route_net_gridless_wrapped(grid, net, gridless_kwargs or {})
         else:
             nr = route_net(grid, net, via_cost=via_cost, escape=escape,

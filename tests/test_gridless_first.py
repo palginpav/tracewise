@@ -1,16 +1,18 @@
 """Tests for the gridless_first ordering mode.
 
 gridless_first routes a nominated set of "hard" nets GRIDLESS-FIRST on the
-clean board (only pads + board edge + drills as obstacles; no grid tracks yet),
-then rasterizes their copper into the shared grid ledger so the grid router
-routes all remaining nets around them.
+clean board (only pads + board edge + drills as obstacles; no grid tracks yet).
+Their copper is written to the PCB file (providing electrical connectivity) but
+is NOT registered as a grid obstacle (grid.cells / grid.hard).  This prevents
+via displacement near PTH connector pads that would otherwise create new
+hole_to_hole DRC violations.
 
 Invariants under test:
   (1) gridless_first=None (default) → byte-identical to current behaviour
   (2) gridless_first=set() (empty) → byte-identical to current behaviour
   (3) gridless_first nets get a GridlessNetRoute in results
   (4) non-first nets stay as plain NetRoute (grid path)
-  (5) gridless_first copper is marked into shared grid before grid nets run
+  (5) 2-pin gridless_first copper IS marked into shared grid (negotiate path)
   (6) route_all signature: gridless_first accepted without error
   (7) route_board_engine signature: gridless_first accepted without error
 
@@ -239,8 +241,13 @@ class TestGridlessFirstActivation:
         assert nr.ok, f"route failed: {nr.reason}"
         assert isinstance(nr, GridlessNetRoute)
 
-    def test_gridless_first_marks_grid_before_others(self, board_context):
-        """Gridless-first copper must appear in the shared grid ledger."""
+    def test_gridless_first_2pin_marks_grid_before_others(self, board_context):
+        """2-pin gridless-first copper (negotiate path) must appear in the grid ledger.
+
+        Multi-pin (K>2) nets use the multipin fast path which does NOT mark the
+        grid — this prevents via displacement near PTH connector pads.  The 2-pin
+        negotiate path still marks the grid so grid nets avoid 2-pin gridless tracks.
+        """
         import numpy as np
         data, geo = board_context
         grid, nets, anchors, _, _ = _fresh_problem(data, geo)

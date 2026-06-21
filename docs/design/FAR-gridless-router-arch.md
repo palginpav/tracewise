@@ -1828,3 +1828,40 @@ ONLY for nets that genuinely need it (e.g. /USB_D+ B.Cu pad); NEVER board-wide. 
 (congestion+rip-up) runs among the 17 using these bounded fast routes. THEN the A/B can actually complete
 and the connectivity gain can be measured. The param + test + A/B harness (`scripts/_verify_gridless_first_ab.py`)
 from attempt 1 are reusable scaffolding.
+
+---
+
+## Gridless-first ordering — BUILD ATTEMPT 2 (2026-06-22): perf FIXED, real gain, but ERROR REGRESSION
+
+Implemented the Probe-Order fast path: `max_window_mm` cap (25mm) threaded through `route_net_gridless`/
+`route_net_multipin`, single-layer-preferred, no board-wide via escalation. `gridless_first=None`
+byte-identical; 392 tests green; `ruff check .` clean.
+
+**Independently re-run A/B (PM, canonical method) — the route now COMPLETES (perf fixed):**
+| | grid-only | gridless_first={17} |
+|---|---|---|
+| runtime | 164s | **167s (bounded — no hang; attempt-1 fixed)** ✅ |
+| unconnected | 48 | **42 (−6)** ✅ real gain |
+| of-17 connected | 0 | **4** (/GPIO18, /QSPI_SCLK, /QSPI_SD2, Net-(U3-USB-DP)) |
+| errors | 88 | **160 (+72)** ❌ |
+| determinism | — | unc stable at 42 across 2 runs ✅ |
+
+**GATE NOT MET.** Two real problems:
+1. **+72 error regression** — new `tracks_crossing=19`, `shorting_items=19`, `clearance` +29. The
+   gridless-first copper is NOT clearance-clean against (a) the grid copper and (b) each other. This is
+   the cross-substrate clearance problem: the 17 nets route on a clean board but their emitted copper
+   shorts/crosses grid traces (and each other — the Probe-Order "43 inter-net errors" when routed without
+   full mutual deconfliction).
+2. **2 grid nets newly failed** (/GPIO1, /GPIO2) — routing the 17 first displaced them. Partial
+   net-negative on those.
+
+So gridless-first currently trades −6 unconnected for +72 errors — not yet a good trade. The PERF fix
+(window cap + single-layer-preferred) is real and valuable (unblocks the approach; no-op-safe default),
+but the cross-substrate CLEARANCE is the next problem.
+
+**Next step (build attempt 3 — clearance, not perf):** (1) the 17 nets must fully DECONFLICT among
+themselves under negotiate (no track-crossing/shorting between them — tighten the congestion/rip-up so
+their copper is mutually clearance-legal); (2) their copper must be marked into the grid ledger with
+PROPER clearance inflation so the subsequent grid routing stays clearance-away (eliminating gridless-vs-grid
+shorts); (3) avoid displacing grid nets that were fine (the /GPIO1,2 regression). Target: keep the −6 (or
+better) connectivity gain with errors ≤ ~89. The perf path from attempt 2 is the foundation.

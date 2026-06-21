@@ -94,6 +94,7 @@ def route_net_gridless(
     drill_obstacles: list | None = None,
     drill_centers: list | None = None,
     allow_via: bool = True,
+    max_window_mm: float | None = None,
 ) -> GridlessRouteResult:
     """Route a 2-pin net gridlessly via visibility-graph A*.
 
@@ -136,6 +137,12 @@ def route_net_gridless(
         When ``True`` (default), attempt 2-layer F.Cu→via→B.Cu routing if the
         single-layer route fails.  Set to ``False`` to disable the 2-layer
         fallback (reproduces pre-M3 behaviour for specific callers).
+    max_window_mm:
+        Hard cap on the window escalation loop (mm).  When provided, the window
+        never exceeds this value (even if the board diagonal is larger).  Use
+        ~20-25 mm for the gridless-first fast path on clean boards to prevent
+        O(n²) visibility-graph blowup.  ``None`` (default) = board diagonal
+        (original behaviour, unchanged).
 
     Returns
     -------
@@ -153,7 +160,8 @@ def route_net_gridless(
     bx1, by1, bx2, by2 = board_bbox
     board_w = bx2 - bx1
     board_h = by2 - by1
-    max_window = max(board_w, board_h)
+    _board_max = max(board_w, board_h)
+    max_window = min(max_window_mm, _board_max) if max_window_mm is not None else _board_max
 
     t_total_start = time.perf_counter()
 
@@ -238,6 +246,7 @@ def route_net_gridless(
                 drill_obstacles or [],
                 drill_centers or [],
                 window_mm,  # use original window_mm (not escalated) for 2L
+                max_window_mm=max_window_mm,  # pass cap through to 2-layer search
             )
             if result_2l is not None:
                 result_2l.stats.update(stats)
@@ -605,6 +614,8 @@ def route_net_multipin(
     board_outline: object | None = None,
     drill_obstacles: list | None = None,
     drill_centers: list | None = None,
+    max_window_mm: float | None = None,
+    allow_via: bool = True,
 ) -> GridlessRouteResult:
     """Route a multi-pin net as a Minimum Spanning Tree (M3-P2).
 
@@ -639,6 +650,17 @@ def route_net_multipin(
         Pre-inflated Shapely circle obstacles for drill holes.
     drill_centers:
         ``(cx, cy, drill_r)`` tuples for hole-to-hole via legality check.
+    max_window_mm:
+        Hard cap on the per-sub-edge window escalation (mm).  When provided,
+        the sub-edge window never exceeds this value.  Use ~20-25 mm for the
+        gridless-first fast path on clean boards to prevent O(n²) blowup.
+        ``None`` (default) = board diagonal (original behaviour, unchanged).
+    allow_via:
+        When ``True`` (default), each sub-edge attempts 2-layer F.Cu→via→B.Cu
+        if single-layer fails.  Set to ``False`` for the gridless-first fast
+        path on clean boards: via-site search is expensive on large free spaces;
+        single-layer-only mirrors the Probe-Order fast path that routes 17 nets
+        in ~39 s.  Failed sub-edges are skipped cleanly (partial tree).
 
     Returns
     -------
@@ -668,7 +690,8 @@ def route_net_multipin(
             board_outline=board_outline,
             drill_obstacles=drill_obstacles,
             drill_centers=drill_centers,
-            allow_via=True,
+            allow_via=allow_via,
+            max_window_mm=max_window_mm,
         )
 
     if extra_obstacles is None:
@@ -706,8 +729,15 @@ def route_net_multipin(
         nx, ny = new_pad["x"], new_pad["y"]
         pad_dist = math.hypot(nx - tx, ny - ty)
 
-        # Bounded window for this sub-edge: max(window_mm, pad_dist*1.2+2mm)
-        sub_window = max(window_mm, pad_dist * 1.2 + 2.0)
+        # Bounded window for this sub-edge: max(window_mm, pad_dist*1.2+2mm),
+        # further capped at max_window_mm when provided (prevents O(n²) blowup
+        # on clean boards in the gridless-first fast path).
+        _sub_window_uncapped = max(window_mm, pad_dist * 1.2 + 2.0)
+        sub_window = (
+            min(_sub_window_uncapped, max_window_mm)
+            if max_window_mm is not None
+            else _sub_window_uncapped
+        )
         wx1 = max(min(tx, nx) - sub_window, bx1)
         wy1 = max(min(ty, ny) - sub_window, by1)
         wx2 = min(max(tx, nx) + sub_window, bx2)
@@ -740,8 +770,13 @@ def route_net_multipin(
                     # Genuine copper shortcut
                     start_xy = (nx, ny)
                     goal_xy = nearest
-                    # Re-derive window around new sub-edge endpoints
-                    sub_window2 = max(window_mm, copper_dist * 1.2 + 2.0)
+                    # Re-derive window around new sub-edge endpoints (also capped)
+                    _sub_window2_uncapped = max(window_mm, copper_dist * 1.2 + 2.0)
+                    sub_window2 = (
+                        min(_sub_window2_uncapped, max_window_mm)
+                        if max_window_mm is not None
+                        else _sub_window2_uncapped
+                    )
                     wx1 = max(min(nx, goal_xy[0]) - sub_window2, bx1)
                     wy1 = max(min(ny, goal_xy[1]) - sub_window2, by1)
                     wx2 = min(max(nx, goal_xy[0]) + sub_window2, bx2)
@@ -767,7 +802,8 @@ def route_net_multipin(
             board_outline=board_outline,
             drill_obstacles=drill_obstacles,
             drill_centers=drill_centers,
-            allow_via=True,
+            allow_via=allow_via,
+            max_window_mm=max_window_mm,
         )
 
         # Accumulate stats
