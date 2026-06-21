@@ -32,16 +32,24 @@ packages = ["src/tracewise"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests", "scripts"]
+# Throwaway research artifacts (one-off probes, spikes, and measurement/verification
+# harnesses) are NOT held to production lint standards — they are kept for
+# reproducibility but excluded from `ruff check .` (which gates CI). Maintained
+# scripts (place_route_measure.py, benchmark_review.py, ablation_route.py,
+# validate_eccf*.py, etc.) remain linted.
+extend-exclude = [
+    "scripts/_probe_*.py",
+    "scripts/probe_*.py",
+    "scripts/_verify_*.py",
+    "scripts/spike*.py",
+    ".claude",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument"]
-
-[tool.ruff.lint.per-file-ignores]
-# Spike scripts use sys.path.insert before package imports (structurally required)
-"scripts/spike*.py" = ["E402", "E501", "B905", "E741"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

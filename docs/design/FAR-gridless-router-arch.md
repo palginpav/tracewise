@@ -1744,3 +1744,32 @@ the negotiate path; deterministic; 381 tests). The residual unconnected is gated
 Recommended next investigation (separate, not CSRU): does treating the GND pour as a RECEDING fill (route
 signal first, refill pour around it) unblock the 17 — i.e. is the residual a pour-modeling artifact or a
 true wall? That is the honest open question this arc ends on.
+
+---
+
+## Probe-Pour (2026-06-21) — the residual is a TRUE WALL (track-topology), NOT a pour artifact
+
+Decisive A/B probe (`scripts/_probe_pour_artifact.py`) on 8 representative boxed-in signal nets
+(/QSPI_SD2, /QSPI_SCLK, /GPIO3, /GPIO9, /GPIO18, /RUN, /SWCLK, /USB_D+).
+
+**Structural finding that closes the question:** `build_windowed_free_space()` ALREADY excludes pour
+polygons — the "receding-pour model" is ALREADY the production behavior; pours are invisible to the
+gridless router. There was never a pour-as-hard-obstacle artifact (correcting the CSRU2 diagnosis AND
+the PM's own caveat).
+
+**Result: 8/8 TRUE WALL.** Each net fails identically WITH pours as obstacles (A) and WITHOUT (B) — the
+pour is irrelevant. The functional blocker is TRACK copper: after grid routing, each net's window free
+space fragments into **155–175 disconnected components**, and the net's pads sit in SEPARATE islands
+(/QSPI_SD2 pads in components 37 & 43; /QSPI_SCLK in 42 & 49), with 17–25 blocking tracks in the direct
+corridor. The pads are topologically disconnected by other nets' tracks; no pour-model change helps.
+count_pour_artifact=0, count_true_wall=8, receding_pour_fix_recommended=false.
+
+**Definitive conclusion for the gridless routing arc:** mitayi's residual unconnected nets are walled by
+TRACK PLACEMENT (the grid greedily routes blockers that fragment free space), not by pours and not by the
+via/multi-pin mechanism. Given the current grid track layout, these nets are at the genuine gridless
+routing ceiling. The remaining levers are NOT more routing: (1) routing ORDER/placement (route these
+nets before the fragmenting tracks — the gridless-first strategy, blocked only by its clean-board
+via-search runtime, a separate perf problem), or (2) the connectivity is placement-bound (matches the
+project's long-standing finding that mitayi connectivity needs placement help). The gridless router
+(M1–M3, deterministic, 381 tests, mitayi 48/89→45/73 via negotiate) is COMPLETE and at its measured
+2-layer routing ceiling.

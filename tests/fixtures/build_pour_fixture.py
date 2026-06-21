@@ -18,6 +18,7 @@ import os
 import sys
 
 import wx  # noqa: F401 — wx.DisableAsserts() must come before pcbnew
+
 wx.DisableAsserts()
 
 import pcbnew  # noqa: E402
