@@ -428,6 +428,37 @@ def build_windowed_free_space(
         except Exception:  # noqa: BLE001
             pass  # If outline processing fails, fall back to plain window
 
+    # --- Own-pad boundary re-carve (M3-P2 FIX: boundary pads always reachable) ---
+    # Collect routing net's own pads (layer-filtered) BEFORE building obstacles.
+    # We need these to re-carve them into free space after the board-edge shrink,
+    # so that a through-hole pad at the board boundary is always inside free space
+    # even when its centre is outside the shrunk window_poly.
+    own_pads_for_layer = [
+        p for p in pads
+        if p["net"] == net_name and (p.get("front") if layer == 0 else p.get("back"))
+    ]
+    # Build own-pad union early (needed for both the obstacle carve-out AND the
+    # window expansion below).
+    own_pad_polys_pre: list = []
+    for p in own_pads_for_layer:
+        px1 = p["x"] - p["hw"]
+        py1 = p["y"] - p["hh"]
+        px2 = p["x"] + p["hw"]
+        py2 = p["y"] + p["hh"]
+        own_pad_polys_pre.append(box(px1, py1, px2, py2))
+
+    if own_pad_polys_pre:
+        own_union_pre = snap(unary_union(own_pad_polys_pre))
+        # Expand window_poly to include any own pads that the board-edge shrink cut out.
+        # This is the M3-P2 boundary-pad fix: the routing net's own start/goal pads
+        # must ALWAYS be inside free space, even when at the physical board edge.
+        try:
+            window_poly = snap(window_poly.union(own_union_pre))
+        except Exception:  # noqa: BLE001
+            pass  # If union fails, keep the shrunken window (conservative fallback)
+    else:
+        own_union_pre = None
+
     obstacle_polys: list = []
     for p in pads:
         if p["net"] == net_name:
@@ -469,25 +500,12 @@ def build_windowed_free_space(
     if obstacle_polys:
         union = snap(unary_union(obstacle_polys))
 
-        # Own-pad carve-out (FIX-2): routing net's own pads must remain reachable
-        # even if adjacent routed copper overlaps them.
-        # Use the same layer filter as the obstacle pads.
-        own_pads = [
-            p for p in pads
-            if p["net"] == net_name and (p.get("front") if layer == 0 else p.get("back"))
-        ]
-        if own_pads:
-            own_pad_polys = [
-                box(
-                    p["x"] - p["hw"],
-                    p["y"] - p["hh"],
-                    p["x"] + p["hw"],
-                    p["y"] + p["hh"],
-                )
-                for p in own_pads
-            ]
-            own_union = snap(unary_union(own_pad_polys))
-            union = snap(union.difference(own_union))
+        # Own-pad carve-out (FIX-2 + M3-P2): routing net's own pads must remain
+        # reachable even if adjacent routed copper overlaps them AND even after
+        # the board-edge inward shrink (the new M3-P2 boundary-pad fix).
+        # Re-use the own_union_pre built above (already snapped).
+        if own_union_pre is not None:
+            union = snap(union.difference(own_union_pre))
 
         free_space = snap(window_poly.difference(union))
     else:

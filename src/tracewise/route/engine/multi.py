@@ -557,10 +557,17 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
             if pads is not None and geo is not None and board_bbox is not None:
                 by_name_all = {n.name: n for n in nets}
 
+                # --- Build pad lookup by net name (for multi-pin routing) ---
+                pads_by_net: dict[str, list[dict]] = {}
+                for p in pads:
+                    pads_by_net.setdefault(p["net"], []).append(p)
+
                 # --- Identify rescue candidates ---
-                # 2-pin F.Cu nets that the grid left unconnected.
-                # Uses sorted() for determinism.
-                rescue_candidates = []
+                # 2-pin F.Cu nets AND multi-pin nets that the grid left
+                # unconnected.  Uses sorted() for determinism.
+                rescue_candidates: list[dict] = []  # 2-pin only (for route_gridless_set)
+                multipin_candidates: list[dict] = []  # K>2 (for route_net_multipin)
+
                 for net_name in sorted(results):
                     nr = results[net_name]
                     if nr.ok:
@@ -568,44 +575,65 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                     net = by_name_all.get(net_name)
                     if net is None:
                         continue
-                    # Only 2-pin nets (Phase 1 gridless is 2-pin only)
-                    if len(net.pads) != 2:
-                        continue
-                    # Only F.Cu pads (layer 0)
-                    if not all(p[0] == 0 for p in net.pads):
-                        continue
-                    # Resolve world-mm pad coords
-                    pad_a_cell = net.pads[0]
-                    pad_b_cell = net.pads[1]
-                    pad_a = grid.to_world(pad_a_cell[1], pad_a_cell[2])
-                    pad_b = grid.to_world(pad_b_cell[1], pad_b_cell[2])
-                    if anchors is not None:
-                        pad_a = anchors.get(pad_a_cell, pad_a)
-                        pad_b = anchors.get(pad_b_cell, pad_b)
-                    rescue_candidates.append({
-                        "net_name": net_name,
-                        "pad_a": pad_a,
-                        "pad_b": pad_b,
-                    })
 
-                if rescue_candidates:
-                    # Build track-segment obstacles from all successfully-routed
-                    # grid + gridless copper in results.
+                    n_pads = len(net.pads)
+
+                    if n_pads == 2:
+                        # 2-pin: only F.Cu pads
+                        if not all(p[0] == 0 for p in net.pads):
+                            continue
+                        # Resolve world-mm pad coords
+                        pad_a_cell = net.pads[0]
+                        pad_b_cell = net.pads[1]
+                        pad_a = grid.to_world(pad_a_cell[1], pad_a_cell[2])
+                        pad_b = grid.to_world(pad_b_cell[1], pad_b_cell[2])
+                        if anchors is not None:
+                            pad_a = anchors.get(pad_a_cell, pad_a)
+                            pad_b = anchors.get(pad_b_cell, pad_b)
+                        rescue_candidates.append({
+                            "net_name": net_name,
+                            "pad_a": pad_a,
+                            "pad_b": pad_b,
+                        })
+
+                    elif n_pads >= 3:
+                        # Multi-pin (M3-P2): include if any pads are F.Cu or
+                        # through-hole (front=True).  Mixed-layer multi-pin nets
+                        # (some pads B.Cu only) are included — route_net_multipin
+                        # is via-capable (2-layer sub-edges).
+                        has_front = any(p[0] == 0 for p in net.pads)
+                        if not has_front:
+                            continue
+                        # Build world-mm pad list from the pads_by_net lookup
+                        # (exact pad centers, not grid-snapped).
+                        net_pads_world = pads_by_net.get(net_name, [])
+                        if len(net_pads_world) < 2:
+                            continue
+                        multipin_candidates.append({
+                            "net_name": net_name,
+                            "net": net,
+                            "pads_world": net_pads_world,
+                        })
+
+                # Build track-segment obstacles once (shared by all rescue passes).
+                any_candidates = bool(rescue_candidates) or bool(multipin_candidates)
+                if any_candidates:
                     track_obs = net_routes_to_track_obstacles(
                         results,
                         grid,
                         track_mm=geo.get("track_mm", 0.2),
                         clearance_mm=geo.get("clearance_mm", 0.2),
                     )
-
-                    # Combine drill + track obstacles into extra_obstacles for
-                    # route_gridless_set (passed via board_outline + drill_obstacles
-                    # params that go through to _route_one_net_congestion →
-                    # build_windowed_free_space).  Track obstacles are Shapely
-                    # polys already inflated — add them to drill_obstacles list
-                    # so build_windowed_free_space picks them up uniformly.
+                    # Combined obstacles = drill holes + grid/gridless track copper
                     combined_drill_obs = list(neg_drill_obstacles or []) + track_obs
+                else:
+                    track_obs = []
+                    combined_drill_obs = []
 
+                # ------------------------------------------------------------------
+                # 2-PIN RESCUE: route_gridless_set (M2.1 / M3-P1 unchanged)
+                # ------------------------------------------------------------------
+                if rescue_candidates:
                     rescue_results = route_gridless_set(
                         net_set=rescue_candidates,
                         pads=pads,
@@ -646,12 +674,11 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                                 geom_blocked_candidates.append(entry)
 
                     # M3 2-layer pass: try route_net_gridless(allow_via=True) for
-                    # geometry-blocked nets.  Extra track obstacles from the now-
-                    # complete rescue pass are already in combined_drill_obs.
+                    # geometry-blocked 2-pin nets.
                     if geom_blocked_candidates:
                         from tracewise.route.gridless.route import route_net_gridless
 
-                        drill_centers = gk.get("drill_centers") or []
+                        drill_centers_2l = gk.get("drill_centers") or []
                         for entry in geom_blocked_candidates:
                             net_name = entry["net_name"]
                             net = by_name_all.get(net_name)
@@ -667,7 +694,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                                 extra_obstacles=track_obs,
                                 board_outline=neg_board_outline,
                                 drill_obstacles=combined_drill_obs,
-                                drill_centers=drill_centers,
+                                drill_centers=drill_centers_2l,
                                 allow_via=True,
                             )
                             if result_2l.ok and result_2l.world_paths:
@@ -677,5 +704,49 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                                 )
                                 _mark(grid, nr, 1)
                                 results[net_name] = nr
+
+                # ------------------------------------------------------------------
+                # MULTI-PIN RESCUE (M3-P2): route_net_multipin for K>2 nets
+                # Routes in deterministic sorted order.
+                # Hard invariant: if multipin_candidates is empty (no multi-pin
+                # failures, or rescue=False), this block is a no-op.
+                # ------------------------------------------------------------------
+                if multipin_candidates:
+                    from tracewise.route.gridless.route import route_net_multipin
+
+                    drill_centers_mp = gk.get("drill_centers") or []
+
+                    for entry in multipin_candidates:
+                        net_name = entry["net_name"]
+                        net = entry["net"]
+                        pads_world = entry["pads_world"]
+
+                        # Skip if already rescued by the 2-pin path (shouldn't
+                        # happen for K>2 entries, but guard for safety).
+                        if results.get(net_name) is not None and results[net_name].ok:
+                            continue
+
+                        result_mp = route_net_multipin(
+                            pads_of_net=pads_world,
+                            net_name=net_name,
+                            all_pads=pads,
+                            geo=geo,
+                            board_bbox=board_bbox,
+                            extra_obstacles=combined_drill_obs,
+                            window_mm=max(neg_window_mm, 8.0),
+                            board_outline=neg_board_outline,
+                            drill_obstacles=combined_drill_obs,
+                            drill_centers=drill_centers_mp,
+                        )
+
+                        # Accept the result if at least some sub-edges connected
+                        # (partial trees are still connectivity gains).
+                        if result_mp.world_paths:
+                            nr = to_gridless_netroute(
+                                net, result_mp.world_paths, grid,
+                                world_vias=result_mp.world_vias,
+                            )
+                            _mark(grid, nr, 1)
+                            results[net_name] = nr
 
     return results

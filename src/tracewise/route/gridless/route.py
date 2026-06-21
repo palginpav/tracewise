@@ -5,6 +5,9 @@ This module provides the standalone ``route_net_gridless`` function and the
 the ``GridlessNetRoute`` adapter (``NetRoute`` IS-A) and engine wiring belong to
 Phase 2.
 
+M3-P2 adds ``route_net_multipin`` for K>2 nets: MST decomposition + sequential
+sub-edge 2-pin routing + same-net-copper-as-goal + bounded windows.
+
 Routing algorithm (per-net):
   1. Derive the routing window from the pad bounding box + *window_mm* margin,
      capped at the board bbox.
@@ -21,6 +24,8 @@ All sub-steps are byte-identical across runs on the same install.
 
 from __future__ import annotations
 
+import heapq
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -441,4 +446,382 @@ def _route_net_2layer(
         world_paths=[waypoints_3d],
         world_vias=via_centers,
         stats=stats_2l,
+    )
+
+
+# ---------------------------------------------------------------------------
+# M3-P2: Deterministic Prim's MST over pads
+# ---------------------------------------------------------------------------
+
+
+def _prim_mst(pads: list[dict]) -> list[tuple[int, int, float]]:
+    """Deterministic Prim's MST over pads.
+
+    Edge weight = Euclidean distance between pad centres.
+    Seeded at index 0 (lowest-index pad).
+    Ties broken by ``(dist, pad_i, pad_j)`` heap key.
+
+    Returns
+    -------
+    List of ``(pad_i, pad_j, dist)`` edges forming the MST (K-1 edges for
+    K pads), in the order they were added to the tree.
+    """
+    K = len(pads)
+    if K < 2:
+        return []
+
+    in_tree = [False] * K
+    in_tree[0] = True
+
+    heap: list[tuple[float, int, int]] = []
+    for j in range(1, K):
+        d = math.hypot(pads[0]["x"] - pads[j]["x"], pads[0]["y"] - pads[j]["y"])
+        heapq.heappush(heap, (d, 0, j))
+
+    edges: list[tuple[int, int, float]] = []
+
+    while len(edges) < K - 1:
+        if not heap:
+            break
+        d, i, j = heapq.heappop(heap)
+        if in_tree[j]:
+            continue
+        in_tree[j] = True
+        edges.append((i, j, d))
+
+        for k in range(K):
+            if not in_tree[k]:
+                dk = math.hypot(pads[j]["x"] - pads[k]["x"], pads[j]["y"] - pads[k]["y"])
+                heapq.heappush(heap, (dk, j, k))
+
+    return edges
+
+
+# ---------------------------------------------------------------------------
+# M3-P2: Same-net copper as goal geometry (Shapely)
+# ---------------------------------------------------------------------------
+
+
+def _same_net_copper_geom(
+    world_paths: list[list[tuple]],
+    via_centers: list[tuple[float, float]],
+    track_mm: float,
+    via_mm: float,
+) -> object | None:
+    """Build the same-net copper union (centerlines + vias) as a Shapely geometry.
+
+    Buffered by ``track_mm/2`` — the ACTUAL copper extent, not the clearance
+    inflate.  Later sub-edges can terminate anywhere on this geometry.
+
+    Returns ``None`` if no copper has been routed yet.
+    """
+    try:
+        from shapely.geometry import LineString, Point
+        from shapely.ops import unary_union
+
+        from tracewise.route.gridless.geom import snap
+
+        polys: list = []
+        for wpath in world_paths:
+            if not wpath:
+                continue
+            pts_2d = [(p[0], p[1]) for p in wpath]
+            if len(pts_2d) < 2:
+                continue
+            ls = snap(LineString(pts_2d).buffer(track_mm / 2.0, cap_style=2))
+            polys.append(ls)
+
+        for vx, vy in via_centers:
+            circle = snap(Point(vx, vy).buffer(via_mm / 2.0, resolution=16))
+            polys.append(circle)
+
+        if not polys:
+            return None
+        return snap(unary_union(polys))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sample_copper_goal_points(
+    same_net_geom: object,
+    window_bbox: tuple[float, float, float, float],
+    track_mm: float,
+    n_max: int = 40,
+) -> list[tuple[float, float]]:
+    """Sample reachable connection points on same-net copper within the window.
+
+    Returns a sorted list of ``(x, y)`` candidates for same-net-copper-as-goal.
+    """
+    try:
+        from shapely.geometry import box as _box
+
+        from tracewise.route.gridless.geom import snap
+
+        if same_net_geom is None or same_net_geom.is_empty:
+            return []
+
+        wx1, wy1, wx2, wy2 = window_bbox
+        window_poly = _box(wx1, wy1, wx2, wy2)
+        clipped = snap(same_net_geom.intersection(window_poly))
+        if clipped.is_empty:
+            return []
+
+        pts: set[tuple[float, float]] = set()
+        geoms = list(clipped.geoms) if clipped.geom_type == "MultiPolygon" else [clipped]
+        for g in geoms:
+            if not hasattr(g, "exterior"):
+                continue
+            for x, y in g.exterior.coords:
+                pts.add((round(x * 1e6) / 1e6, round(y * 1e6) / 1e6))
+            ext = g.exterior
+            total_len = ext.length
+            if total_len > 0:
+                step = max(track_mm * 2, total_len / n_max)
+                d = 0.0
+                while d <= total_len:
+                    pt = ext.interpolate(d)
+                    pts.add((round(pt.x * 1e6) / 1e6, round(pt.y * 1e6) / 1e6))
+                    d += step
+
+        result = sorted(pts, key=lambda p: (round(p[0], 6), round(p[1], 6)))[:n_max]
+        return result
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# ---------------------------------------------------------------------------
+# M3-P2: Multi-pin connection-tree routing (MST + same-net-copper-as-goal)
+# ---------------------------------------------------------------------------
+
+
+def route_net_multipin(
+    pads_of_net: list[dict],
+    net_name: str,
+    all_pads: list[dict],
+    geo: dict,
+    board_bbox: tuple[float, float, float, float],
+    extra_obstacles: list | None = None,
+    window_mm: float = 8.0,
+    board_outline: object | None = None,
+    drill_obstacles: list | None = None,
+    drill_centers: list | None = None,
+) -> GridlessRouteResult:
+    """Route a multi-pin net as a Minimum Spanning Tree (M3-P2).
+
+    Decomposes the net into K-1 sub-edges via deterministic Prim's MST, then
+    routes each sub-edge sequentially using ``route_net_gridless`` with
+    **bounded per-sub-edge windows**.  After each successful sub-edge, the
+    net's realized copper is added as same-net connection geometry so later
+    sub-edges can terminate anywhere on already-routed copper (copper shortcut).
+
+    Parameters
+    ----------
+    pads_of_net:
+        Pads belonging to this net (from ``extract_pads``).  Must have keys
+        ``x``, ``y``, ``hw``, ``hh``, ``front``, ``back``, ``net``.
+    net_name:
+        Net name (used for own-pad carve-out in free-space construction).
+    all_pads:
+        All board pads (including other nets), used by ``route_net_gridless``
+        to build the obstacle set.
+    geo:
+        Project geometry dict (``track_mm``, ``clearance_mm``, ``via_mm``,
+        ``via_drill_mm``, etc.).
+    board_bbox:
+        ``(x1, y1, x2, y2)`` board bounding box.
+    extra_obstacles:
+        Pre-inflated Shapely polygons of already-routed OTHER-net copper.
+    window_mm:
+        Initial routing window half-margin per sub-edge.
+    board_outline:
+        Optional Shapely Polygon of the board interior.
+    drill_obstacles:
+        Pre-inflated Shapely circle obstacles for drill holes.
+    drill_centers:
+        ``(cx, cy, drill_r)`` tuples for hole-to-hole via legality check.
+
+    Returns
+    -------
+    ``GridlessRouteResult`` with combined ``world_paths`` and ``world_vias``
+    from all successful sub-edges.  ``ok=True`` iff ALL K-1 MST sub-edges
+    routed successfully.
+    """
+    _require_shapely()
+
+    K = len(pads_of_net)
+    if K < 2:
+        return GridlessRouteResult(ok=True, world_paths=[], world_vias=[],
+                                   reason="trivially connected (< 2 pads)")
+    if K == 2:
+        # Fast path: 2-pin net → delegate to the standard route_net_gridless.
+        pa = pads_of_net[0]
+        pb = pads_of_net[1]
+        return route_net_gridless(
+            pad_a=(pa["x"], pa["y"]),
+            pad_b=(pb["x"], pb["y"]),
+            pads=all_pads,
+            net_name=net_name,
+            geo=geo,
+            board_bbox=board_bbox,
+            extra_obstacles=extra_obstacles,
+            window_mm=window_mm,
+            board_outline=board_outline,
+            drill_obstacles=drill_obstacles,
+            drill_centers=drill_centers,
+            allow_via=True,
+        )
+
+    if extra_obstacles is None:
+        extra_obstacles = []
+    if drill_obstacles is None:
+        drill_obstacles = []
+    if drill_centers is None:
+        drill_centers = []
+
+    track_mm: float = geo["track_mm"]
+    via_mm: float = geo.get("via_mm", 0.6)
+    bx1, by1, bx2, by2 = board_bbox
+
+    # --- Step 1: Build MST (deterministic Prim, seed=0, tie-break by dist,i,j) ---
+    mst_edges = _prim_mst(pads_of_net)
+
+    # --- Step 2: Route K-1 sub-edges sequentially ---
+    all_world_paths: list[list[tuple]] = []
+    all_via_centers: list[tuple[float, float]] = []
+    same_net_geom: object | None = None  # grows after each successful sub-edge
+
+    n_ok = 0
+    n_failed = 0
+    total_stats: dict = {
+        "nodes": 0, "edges": 0, "escalations": 0,
+        "build_time_s": 0.0, "solve_time_s": 0.0, "total_time_s": 0.0,
+    }
+
+    t_total_start = time.perf_counter()
+
+    for _ei, (i, j, _dist) in enumerate(mst_edges):
+        tree_pad = pads_of_net[i]
+        new_pad = pads_of_net[j]
+        tx, ty = tree_pad["x"], tree_pad["y"]
+        nx, ny = new_pad["x"], new_pad["y"]
+        pad_dist = math.hypot(nx - tx, ny - ty)
+
+        # Bounded window for this sub-edge: max(window_mm, pad_dist*1.2+2mm)
+        sub_window = max(window_mm, pad_dist * 1.2 + 2.0)
+        wx1 = max(min(tx, nx) - sub_window, bx1)
+        wy1 = max(min(ty, ny) - sub_window, by1)
+        wx2 = min(max(tx, nx) + sub_window, bx2)
+        wy2 = min(max(ty, ny) + sub_window, by2)
+        sub_window_bbox = (wx1, wy1, wx2, wy2)
+
+        # Choose start/goal: use same-net copper shortcut if available
+        if same_net_geom is None:
+            # First sub-edge: route tree_pad → new_pad directly
+            start_xy = (tx, ty)
+            goal_xy = (nx, ny)
+        else:
+            # Later sub-edge: route FROM new_pad TO nearest point on tree copper.
+            copper_pts = _sample_copper_goal_points(
+                same_net_geom, sub_window_bbox, track_mm, n_max=40
+            )
+
+            if copper_pts:
+                nearest = min(copper_pts,
+                              key=lambda pt: math.hypot(pt[0] - nx, pt[1] - ny))
+                copper_dist = math.hypot(nearest[0] - nx, nearest[1] - ny)
+
+                # Use copper shortcut only if strictly shorter than pad-to-pad
+                # AND the copper point is NOT at the tree_pad (interior shortcut).
+                is_at_tree_pad = (
+                    abs(nearest[0] - tx) < track_mm
+                    and abs(nearest[1] - ty) < track_mm
+                )
+                if copper_dist < pad_dist - 0.05 and not is_at_tree_pad:
+                    # Genuine copper shortcut
+                    start_xy = (nx, ny)
+                    goal_xy = nearest
+                    # Re-derive window around new sub-edge endpoints
+                    sub_window2 = max(window_mm, copper_dist * 1.2 + 2.0)
+                    wx1 = max(min(nx, goal_xy[0]) - sub_window2, bx1)
+                    wy1 = max(min(ny, goal_xy[1]) - sub_window2, by1)
+                    wx2 = min(max(nx, goal_xy[0]) + sub_window2, bx2)
+                    wy2 = min(max(ny, goal_xy[1]) + sub_window2, by2)
+                else:
+                    # No genuine shortcut: route new_pad → tree_pad
+                    start_xy = (nx, ny)
+                    goal_xy = (tx, ty)
+            else:
+                # No copper points found in window: route new_pad → tree_pad
+                start_xy = (nx, ny)
+                goal_xy = (tx, ty)
+
+        result = route_net_gridless(
+            pad_a=start_xy,
+            pad_b=goal_xy,
+            pads=all_pads,
+            net_name=net_name,
+            geo=geo,
+            board_bbox=board_bbox,
+            extra_obstacles=extra_obstacles,
+            window_mm=sub_window,
+            board_outline=board_outline,
+            drill_obstacles=drill_obstacles,
+            drill_centers=drill_centers,
+            allow_via=True,
+        )
+
+        # Accumulate stats
+        for k in ("nodes", "edges", "escalations"):
+            total_stats[k] = max(total_stats[k], result.stats.get(k, 0))
+        for k in ("build_time_s", "solve_time_s", "total_time_s"):
+            total_stats[k] = total_stats.get(k, 0.0) + result.stats.get(k, 0.0)
+
+        if not result.ok:
+            n_failed += 1
+            # Failure: continue with remaining sub-edges (partial tree)
+            continue
+
+        n_ok += 1
+        all_world_paths.extend(result.world_paths)
+        all_via_centers.extend(result.world_vias)
+
+        # Update same-net copper geometry for next sub-edge
+        new_geom = _same_net_copper_geom(
+            result.world_paths, result.world_vias, track_mm, via_mm
+        )
+        if new_geom is not None:
+            if same_net_geom is None:
+                same_net_geom = new_geom
+            else:
+                try:
+                    from shapely.ops import unary_union
+
+                    from tracewise.route.gridless.geom import snap
+                    same_net_geom = snap(unary_union([same_net_geom, new_geom]))
+                except Exception:  # noqa: BLE001
+                    same_net_geom = new_geom
+
+    total_stats["total_time_s"] = round(time.perf_counter() - t_total_start, 6)
+
+    if n_ok == 0:
+        return GridlessRouteResult(
+            ok=False,
+            stats=total_stats,
+            reason=f"all {len(mst_edges)} MST sub-edges failed",
+        )
+
+    # Partial success is still returned with ok=True for the sub-set that connected;
+    # engine wiring decides whether to accept partial connectivity.
+    ok = (n_failed == 0)
+    reason = (
+        "" if ok
+        else f"{n_failed}/{len(mst_edges)} MST sub-edge(s) failed"
+    )
+
+    return GridlessRouteResult(
+        ok=ok,
+        world_paths=all_world_paths,
+        world_vias=all_via_centers,
+        stats=total_stats,
+        reason=reason,
     )

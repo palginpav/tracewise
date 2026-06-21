@@ -1682,3 +1682,35 @@ boundary through-hole pads are always reachable.
 **M3-P2 mechanism is GO.** Next: M3-P2 production — promote MST decomposition + same-net-copper-as-goal
 into `route_gridless_set`/the engine (layer-aware, bounded windows), ADD the boundary own-pad carve-out
 fix, then route mitayi's ~20 unconnected multi-pin nets and measure the M3 connectivity gate (unc < 48).
+
+---
+
+## M3-P2 PRODUCTION (2026-06-21) — mechanism shipped; +1 connectivity; residual is ROUTABLE, not pour-coverage
+
+Promoted multi-pin connection trees into production: boundary own-pad carve-out fix (`geom.py` — own
+start/goal pad unioned into free space AFTER the board-edge shrink, so boundary through-hole pads are
+reachable); `route_net_multipin` (deterministic Prim MST + sequential bounded-window sub-routes +
+same-net-copper-as-goal, via-capable); engine wiring (gridless_rescue routes grid's unconnected
+multi-pin nets via the tree). 381 tests green, ruff clean, `gridless_rescue=False` byte-identical.
+
+**M3 connectivity gate (independently verified, canonical A/B vs grid-only 48/89):**
+- gridless_rescue=True → **47 unconnected** (gate met, 47 < 48), **0 new via hole_clearance/hole_to_hole**,
+  errors 87–89 (zone-fill noise), deterministic. BUT the gain is **+1 only**.
+
+**Corrected strategic read (a prior subagent claimed "residual is mostly power buses" — WRONG).** The 20
+still-unconnected nets classify as:
+- **POWER / pour-coverage (3):** GND (59 pins), +3V3 (29), +1V1 (5) — these connect via copper POURS, not
+  track trees; out of scope for routing.
+- **ROUTABLE SIGNAL (17):** /GPIO3,4,6,9,14,18,20,23,27,28 (3-4 pins), /RUN (6), /SWCLK, /USB_D+, /XIN,
+  /QSPI_SCLK, /QSPI_SD2, Net-(U3-USB-DP). These are exactly M3-P2's target class.
+
+**So there IS real connectivity headroom (17 routable nets), but the multi-pin RESCUE only nets +1.** The
+mechanism is correct (Spike-M3P2 routed /GPIO15 standalone), so the gap is the full-board RESCUE
+integration: these 17 signal nets are left unconnected by the grid AND boxed-in by grid copper post-grid
+(the same one-way-barrier problem as the QSPI nets) — rescue-after-grid finds no room.
+
+**Next lever — revisit CSRU (option 2), now VIABLE.** CSRU was NO-GO only because the blocking nets were
+multi-pin and the rerouter was 2-pin-only. M3-P2 NOW provides a multi-pin rerouter, so cross-substrate
+rip-up can rip multi-pin blockers, reroute them (multi-pin tree), and route the boxed-in signal nets in
+the freed corridors — a net-positive swap is now possible. This is the path to converting the 17 routable
+residual nets into real unconnected<<48 gains.
