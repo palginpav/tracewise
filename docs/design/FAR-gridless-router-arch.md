@@ -1714,3 +1714,33 @@ multi-pin and the rerouter was 2-pin-only. M3-P2 NOW provides a multi-pin rerout
 rip-up can rip multi-pin blockers, reroute them (multi-pin tree), and route the boxed-in signal nets in
 the freed corridors — a net-positive swap is now possible. This is the path to converting the 17 routable
 residual nets into real unconnected<<48 gains.
+
+---
+
+## Spike-CSRU2 (2026-06-21) — NO-GO: residual is GND-POUR-gated, not a rip-up problem
+
+`scripts/spike_csru2_multipin_ripup.py` — cross-substrate rip-up revisited with the M3-P2 multi-pin
+rerouter. Result: **NO-GO, 0 targets connected, final unconnected unchanged at 48** (no gain over grid).
+
+**Root cause:** all 17 routable signal targets have **GND/+3V3 POUR copper** in their corridors (GND
+pours board-wide, 59 pads; +3V3 29 pads). You cannot rip-and-reroute a poured net as point-to-point
+traces — so CSRU (any version) is the wrong lever. The M3-P2 multi-pin rerouter does NOT unblock this:
+CSRU v1's "missing multi-pin rerouter" was a SYMPTOM; the real wall is power-pour coverage. **This
+rediscovers a CLOSED DEAD-END from the project's own history** (RESUME/ROUTING-COMPLETION: "power pours
+CANNOT be locally edited — every refill re-solves the global fill").
+
+**PM caveat (open question, not yet resolved):** CSRU2's early-exit guard SKIPPED each target the moment
+GND appeared in its corridor — it never actually attempted to route the signal net THROUGH the GND
+region. In reality pours RECEDE around new traces (refill with clearance AFTER routing). So
+"GND blocks all 17" may be partly an artifact of treating the GND pour as a HARD obstacle rather than a
+receding fill. Whether the 17 signal nets are TRULY walled or merely mis-modeled (pour-as-hard-obstacle)
+is UNRESOLVED. Either way CSRU is the wrong tool; the open question is whether a corrected pour-interaction
+model (signal routes first, pour refills around it) would let gridless_rescue connect more of the 17.
+
+**Conclusion — the gridless ROUTING arc has reached its practical connectivity ceiling on mitayi.** The
+2-layer + via + multi-pin gridless machinery is built, proven, and integrated (mitayi 48/89 → 45/73 via
+the negotiate path; deterministic; 381 tests). The residual unconnected is gated by GND-pour INTERACTION
+— a different problem class (pour-aware routing / pour-keepout engineering / placement), NOT more rip-up.
+Recommended next investigation (separate, not CSRU): does treating the GND pour as a RECEDING fill (route
+signal first, refill pour around it) unblock the 17 — i.e. is the residual a pour-modeling artifact or a
+true wall? That is the honest open question this arc ends on.
