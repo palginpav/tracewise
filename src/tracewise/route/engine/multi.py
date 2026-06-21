@@ -245,6 +245,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               gridless_kwargs: dict | None = None,
               gridless_negotiate: bool = False,
               gridless_rescue: bool = False,
+              gridless_first: set[str] | None = None,
               **_legacy) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
@@ -296,9 +297,42 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
          their copper is rasterized into the shared grid ledger.
     Distinct from ``gridless_negotiate`` (M2 pre-route mode); both can coexist.
 
+    `gridless_first` (default ``None``) enables the gridless-first ordering mode:
+    the nominated set of "hard" nets are routed GRIDLESS-FIRST on the CLEAN board
+    (only pads + board edge + drills as obstacles; no grid tracks yet) via the
+    ``route_gridless_set`` negotiate mechanism (congestion history + bounded rip-up
+    among them, cross-net aware).  Their copper is rasterized into the shared grid
+    ledger, then the normal grid ``route_all`` runs for ALL OTHER nets which now
+    route around the gridless-first copper.
+
+    Routing uses single-layer-preferred + BOUNDED windows (the Probe-Order fast
+    path): nets try single-layer F.Cu with a bounded window first; geometry-blocked
+    nets escalate to 2-layer/via with a BOUNDED via window (capped to avoid the
+    board-wide blowup seen in M3-P1.1).
+
+    This is semantically equivalent to ``gridless_negotiate=True`` +
+    ``gridless_nets=gridless_first`` but exposes a clean single-param interface.
+    When ``gridless_first`` is provided and ``gridless_nets`` is None, the
+    ``gridless_first`` set is used as ``gridless_nets`` and ``gridless_negotiate``
+    is forced to ``True``.
+
     Hard invariant: ``gridless_nets=None`` or empty (regardless of
     ``gridless_negotiate``) → behaviour is byte-identical to the pre-M2 engine.
-    ``gridless_rescue=False`` (default) → byte-identical to current behaviour."""
+    ``gridless_rescue=False`` (default) → byte-identical to current behaviour.
+    ``gridless_first=None`` (default) → no-op, byte-identical to current behaviour.
+    """
+    # ------------------------------------------------------------------
+    # gridless_first: convenience param — activates gridless_negotiate path.
+    # When set, merge into gridless_nets and force gridless_negotiate=True.
+    # Hard invariant: gridless_first=None → no-op (nothing changes below).
+    # ------------------------------------------------------------------
+    if gridless_first:
+        # Merge with any existing gridless_nets (union, so caller can combine both)
+        if gridless_nets:
+            gridless_nets = set(gridless_nets) | set(gridless_first)
+        else:
+            gridless_nets = set(gridless_first)
+        gridless_negotiate = True
     if _legacy:
         # Silently accept (and ignore) the removed `time_budget_s` keyword so
         # callers that still pass it do not crash immediately.  Emit a warning
@@ -338,6 +372,16 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         neg_geom_threshold = gk.get("negotiate_geom_block_threshold", 0.5)
         neg_board_outline = gk.get("board_outline")
         neg_drill_obstacles = gk.get("drill_obstacles")
+        # max_classify_window_mm: hard cap on the pre-classification window
+        # escalation loop.  Critical for gridless_first on clean boards —
+        # without a cap, large windows produce O(n²) visibility graphs.
+        # Default None = board diagonal (original behaviour, unchanged).
+        # gridless_first path passes 25mm (Probe-Order fast-path bound).
+        neg_max_classify_window = gk.get("negotiate_max_classify_window_mm", None)
+        # max_route_window_mm: hard cap on the routing window escalation.
+        # Also critical for gridless_first on clean boards — caps the fallback
+        # escalation in the rip-up loop.  Default None = original behaviour.
+        neg_max_route_window = gk.get("negotiate_max_route_window_mm", None)
 
         if pads is not None and geo is not None and board_bbox is not None:
             by_name_all = {n.name: n for n in nets}
@@ -372,6 +416,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                     geom_block_threshold=neg_geom_threshold,
                     board_outline=neg_board_outline,
                     drill_obstacles=neg_drill_obstacles,
+                    max_classify_window_mm=neg_max_classify_window,
+                    max_route_window_mm=neg_max_route_window,
                 )
 
                 # M3-P1.1: collect geometry-blocked nets for 2-layer via attempt.
@@ -408,12 +454,18 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                             _pb = nd_entry["pad_b"]
                             # Bound the via-search window to avoid O(n²) explosion
                             # on the large clean-board free space.  Use 3× the
-                            # pad-to-pad span + 8mm as a generous but bounded cap;
-                            # the rescue path (post-grid) omits this cap (None)
+                            # pad-to-pad span + 8mm as a generous but bounded cap,
+                            # further capped at neg_max_classify_window (25mm for
+                            # the gridless_first path on clean boards).
+                            # The rescue path (post-grid) omits this cap (None)
                             # because fragmented free space is already bounded.
                             import math as _math
                             _pad_span = _math.hypot(_pb[0] - _pa[0], _pb[1] - _pa[1])
-                            _max_win = _pad_span * 3.0 + 8.0
+                            _max_win_uncapped = _pad_span * 3.0 + 8.0
+                            if neg_max_classify_window is not None:
+                                _max_win = min(_max_win_uncapped, neg_max_classify_window)
+                            else:
+                                _max_win = _max_win_uncapped
                             result_2l = _route_net_2layer(
                                 pad_a=_pa,
                                 pad_b=_pb,

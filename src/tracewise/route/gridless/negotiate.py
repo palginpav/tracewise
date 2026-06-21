@@ -329,10 +329,14 @@ def _route_one_net_congestion(
     allow_window_escalation: bool = True,
     board_outline: object | None = None,
     drill_obstacles: list | None = None,
+    max_window_mm: float | None = None,
 ) -> tuple[list[tuple[float, float]] | None, float, int, int, int]:
     """Route net_name with congestion pricing.
 
     Returns ``(waypoints_or_None, window_mm_used, n_nodes, n_edges, escalations)``.
+
+    ``max_window_mm`` caps how large the window can grow during escalation.
+    Default ``None`` means original behaviour (escalate to board diagonal).
     """
     from shapely.geometry import Point
 
@@ -342,6 +346,7 @@ def _route_one_net_congestion(
     track_mm = geo["track_mm"]
     bx1, by1, bx2, by2 = board_bbox
     board_size = max(bx2 - bx1, by2 - by1)
+    _esc_ceil = min(max_window_mm, board_size) if max_window_mm is not None else board_size
 
     window_mm = window_mm_start
     path: list[tuple[float, float]] | None = None
@@ -366,8 +371,8 @@ def _route_one_net_congestion(
         # Check start/goal are in free space
         fs_buf = free_space.buffer(1e-5)
         if not fs_buf.contains(Point(*start_xy)) or not fs_buf.contains(Point(*goal_xy)):
-            if allow_window_escalation and window_mm < board_size:
-                window_mm = min(window_mm * 2.0, board_size)
+            if allow_window_escalation and window_mm < _esc_ceil:
+                window_mm = min(window_mm * 2.0, _esc_ceil)
                 escalations += 1
                 continue
             break
@@ -388,10 +393,10 @@ def _route_one_net_congestion(
             break
 
         current_window_size = max(wx2 - wx1, wy2 - wy1)
-        if current_window_size >= board_size * 0.95:
+        if current_window_size >= _esc_ceil * 0.95:
             break
 
-        window_mm = min(window_mm * 2.0, board_size * 2.0)
+        window_mm = min(window_mm * 2.0, _esc_ceil * 2.0)
         escalations += 1
 
     return path, window_mm, n_nodes, n_edges, escalations
@@ -486,6 +491,8 @@ def route_gridless_set(
     geom_block_threshold: float = 0.5,
     board_outline: object | None = None,
     drill_obstacles: list | None = None,
+    max_classify_window_mm: float | None = None,
+    max_route_window_mm: float | None = None,
 ) -> dict[str, GridlessSetNetResult]:
     """Route a set of gridless nets with congestion negotiation and bounded rip-up.
 
@@ -513,6 +520,21 @@ def route_gridless_set(
         Initial visibility-graph window half-margin (mm).
     geom_block_threshold:
         Fraction of board diagonal beyond which a net is geometry-blocked (default 0.5).
+    max_classify_window_mm:
+        Hard cap on the pre-classification window escalation (mm).  When provided,
+        the 6-doubling loop stops at this window size instead of the board diagonal.
+        Critical for the ``gridless_first`` path on clean boards where large windows
+        produce O(n²) visibility graphs (hundreds of corners from all pad obstacles).
+        Default ``None`` = board diagonal (original behaviour, unchanged).
+        Set to ~20-25 mm for the gridless-first pre-route to match the Probe-Order
+        bounded-window strategy (fast path, <7 s/net).
+    max_route_window_mm:
+        Hard cap on the window escalation during routing (both the initial bounded
+        attempt and the fallback escalation path).  When provided, the fallback
+        ``allow_window_escalation=True`` call in the rip-up loop starts from at most
+        this value and cannot exceed it.  Default ``None`` = board diagonal
+        (original behaviour).  Set to ~25-30 mm for the ``gridless_first`` path
+        to prevent board-wide visibility-graph blowup during the fallback pass.
 
     Returns
     -------
@@ -535,6 +557,15 @@ def route_gridless_set(
     clearance_mm = geo["clearance_mm"]
     track_mm = geo["track_mm"]
     inflate_track = track_mm + clearance_mm
+
+    # Routing window cap: limits the fallback escalation to avoid O(n²) blowup.
+    # None = original behaviour (escalates to board diagonal).
+    _board_max_route = max(bx2 - bx1, by2 - by1)
+    _route_cap = (
+        min(max_route_window_mm, _board_max_route)
+        if max_route_window_mm is not None
+        else _board_max_route
+    )
 
     sc_grid = _make_supercell_grid(board_bbox)
 
@@ -559,14 +590,28 @@ def route_gridless_set(
     min_needed_window: dict[str, float] = {}
     geometry_blocked: set[str] = set()
 
+    # Determine the ceiling for the classify window escalation.
+    # max_classify_window_mm caps the 6-doubling loop to avoid O(n²) blowup
+    # on large clean-board free spaces (gridless-first path).
+    _board_max = max(bx2 - bx1, by2 - by1)
+    _classify_cap = (
+        min(max_classify_window_mm, _board_max)
+        if max_classify_window_mm is not None
+        else _board_max
+    )
+
     for nd in net_set:
         nname = nd["net_name"]
         sxy = nd["pad_a"]
         gxy = nd["pad_b"]
 
-        win = window_mm_start
+        win = min(window_mm_start, _classify_cap)
         found = False
+        prev_win = -1.0
         for _ in range(6):  # up to 6 doublings
+            if win == prev_win:
+                break  # already at cap; no point retrying
+            prev_win = win
             wx1 = max(min(sxy[0], gxy[0]) - win, bx1)
             wy1 = max(min(sxy[1], gxy[1]) - win, by1)
             wx2 = min(max(sxy[0], gxy[0]) + win, bx2)
@@ -580,7 +625,7 @@ def route_gridless_set(
                 found = True
                 min_needed_window[nname] = win
                 break
-            win = min(win * 2.0, max(bx2 - bx1, by2 - by1))
+            win = min(win * 2.0, _classify_cap)
         if not found:
             min_needed_window[nname] = win
 
@@ -631,7 +676,10 @@ def route_gridless_set(
             if n != net_name and nr.get("shapely_obstacle") is not None
         ]
 
-        effective_window = min_needed_window.get(net_name, window_mm_start)
+        effective_window = min(
+            min_needed_window.get(net_name, window_mm_start),
+            _route_cap,
+        )
 
         path, window_used, n_nodes, n_edges, escalations = _route_one_net_congestion(
             net_name, start_xy, goal_xy, pads, geo,
@@ -640,6 +688,7 @@ def route_gridless_set(
             allow_window_escalation=False,  # bounded; escalate only when no rip-up
             board_outline=board_outline,
             drill_obstacles=drill_obstacles,
+            max_window_mm=_route_cap,
         )
 
         if path is not None:
@@ -706,14 +755,21 @@ def route_gridless_set(
             queue.insert(0, net_name)
         else:
             # Fixed obstacle / thrash guard → window escalation
+            # Cap the escalation start to _route_cap to avoid O(n²) blowup.
+            _fallback_win = min(
+                max(effective_window * 2, window_mm_start * 2),
+                _route_cap,
+            )
             path2, window_used2, n_nodes2, n_edges2, esc2 = _route_one_net_congestion(
                 net_name, start_xy, goal_xy, pads, geo,
                 routed_obstacles, sc_grid, history_factor,
-                max(effective_window * 2, window_mm_start * 2),
+                _fallback_win,
                 board_bbox,
-                allow_window_escalation=True,
+                # allow_window_escalation only if _route_cap hasn't been hit yet
+                allow_window_escalation=(_fallback_win < _route_cap),
                 board_outline=board_outline,
                 drill_obstacles=drill_obstacles,
+                max_window_mm=_route_cap,
             )
 
             if path2 is not None:

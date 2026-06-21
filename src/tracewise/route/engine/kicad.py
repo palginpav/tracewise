@@ -434,7 +434,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        nudge_vias: bool = False,
                        gridless_nets: set[str] | None = None,
                        gridless_negotiate: bool = False,
-                       gridless_rescue: bool = False) -> dict:
+                       gridless_rescue: bool = False,
+                       gridless_first: set[str] | None = None) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -480,7 +481,17 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     the gridless engine with ALL existing copper (grid tracks + pads + board
     edge + drill holes) as obstacles.  Gridless routes in the real gaps around
     grid copper and cannot block grid nets.  Does not require ``gridless_nets``.
-    ``gridless_rescue=False`` (default) is byte-identical to current behaviour."""
+    ``gridless_rescue=False`` (default) is byte-identical to current behaviour.
+
+    `gridless_first` (default ``None``) enables the gridless-first ordering mode:
+    the nominated set of "hard" nets are routed GRIDLESS-FIRST on the CLEAN board
+    (only pads + board edge + drills as obstacles; no grid tracks yet).  Routing
+    uses single-layer-preferred + BOUNDED windows; geometry-blocked nets get a
+    bounded 2-layer/via attempt.  Their copper is rasterized into the shared grid
+    ledger, then the normal grid ``route_all`` runs for all remaining nets.
+    Semantically equivalent to ``gridless_negotiate=True`` +
+    ``gridless_nets=gridless_first`` but exposes a clean single-param interface.
+    ``gridless_first=None`` (default) is byte-identical to current behaviour."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors, obstacles, anchor_rects = build_problem(
@@ -500,12 +511,13 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     # board_outline and drill_obstacles extend the obstacle model to prevent
     # copper_edge_clearance and drill-clearance DRC violations.
     # Also built for gridless_rescue mode even when gridless_nets is None.
+    # Also built for gridless_first mode even when gridless_nets is None.
     gridless_kwargs: dict | None = None
-    if gridless_nets or gridless_rescue:
+    if gridless_nets or gridless_rescue or gridless_first:
         from tracewise.route.gridless.geom import HAVE_SHAPELY
         if not HAVE_SHAPELY:
             raise ImportError(
-                "gridless_nets/gridless_rescue requires shapely>=2.0; "
+                "gridless_nets/gridless_rescue/gridless_first requires shapely>=2.0; "
                 "pip install tracewise[gridless]"
             )
         from tracewise.route.gridless.geom import (
@@ -536,6 +548,23 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
             "drill_obstacles": _drill_obstacles,
             "drill_centers": _drill_centers,
         }
+        # gridless_first path: cap the pre-classification window to avoid O(n²)
+        # visibility-graph blowup on large clean-board free spaces.
+        # 25mm matches the Probe-Order fast-path bound (MAX_WINDOW_MM=20mm +
+        # a small buffer for nets at the 20mm boundary).
+        # This key is only consumed when gridless_negotiate=True (triggered by
+        # gridless_first). The rescue path omits it (None = board diagonal,
+        # original behaviour for fragmented post-grid free space).
+        if gridless_first:
+            gridless_kwargs["negotiate_max_classify_window_mm"] = 25.0
+            # Also cap the routing-window escalation to prevent fallback paths
+            # from reaching board-scale windows on clean boards.
+            gridless_kwargs["negotiate_max_route_window_mm"] = 25.0
+            # Reduce rip-up iterations for gridless_first on clean boards.
+            # Default ripup_factor=8 gives 136 iterations for 17 nets — too many
+            # for a clean board where most nets route on the first attempt.
+            # ripup_factor=2 gives budget=34; still allows rip-up but caps cost.
+            gridless_kwargs["negotiate_ripup_factor"] = 2
 
     if engine == "pathfinder":
         from tracewise.route.engine.pathfinder import route_all_pathfinder
@@ -550,7 +579,8 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                             gridless_nets=gridless_nets,
                             gridless_kwargs=gridless_kwargs,
                             gridless_negotiate=gridless_negotiate,
-                            gridless_rescue=gridless_rescue)
+                            gridless_rescue=gridless_rescue,
+                            gridless_first=gridless_first)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"],

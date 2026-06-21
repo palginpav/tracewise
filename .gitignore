@@ -15,3 +15,4 @@ runs/
 .spike1_tmp/
 .spikeM3_tmp/
 .m2_gate_tmp/
+.probe_order_tmp/

@@ -1802,3 +1802,29 @@ GRIDLESS-FIRST via the negotiate mechanism (congestion + rip-up among them, boun
 preferred, via where needed e.g. USB_D+); (3) mark their copper into the shared ledger; (4) grid-route
 the remainder around them. Measure unconnected vs the 48 baseline (projection: ~15-16 of 17 → meaningful
 drop below 48 — the first SUBSTANTIAL connectivity gain; to be verified by real DRC, not assumed).
+
+---
+
+## Gridless-first ordering — BUILD ATTEMPT 1 (2026-06-21): PARTIAL, measurement BLOCKED on perf
+
+Wired a `gridless_first: set[str] | None` param into `route_all`/`route_board_engine` (multi.py):
+no-op-safe (`gridless_first=None` byte-identical to current; suite green; `ruff check .` clean).
+
+**BUT the implementation is incomplete and the gate is UNMEASURED.** `gridless_first` merely ACTIVATES
+the existing `gridless_negotiate` path (merges the set into `gridless_nets`, forces negotiate=True) — it
+does NOT implement Probe-Order's perf-critical fast path. So it reuses the SLOW negotiate-with-board-wide-
+via-search that M3-P1.1 already showed is pathological: the gridless-first A/B route of the 17 nets
+**did not complete in 30+ minutes** (grid-only side finished in 170s; gridless-first side never produced
+output → killed). Board-wide blowup, exactly the M3-P1.1 failure mode.
+
+**Root cause:** Probe-Order proved the 17 nets route FAST (≤6s each) ONLY with **single-layer-preferred +
+BOUNDED windows** (no board-wide via escalation). The build wired the param to the negotiate path WITHOUT
+that fast path, so via-search escalates board-wide and hangs.
+
+**Precisely-scoped next step (BUILD ATTEMPT 2):** implement the single-layer-preferred + bounded-window
+routing in the gridless-first path itself: for each hard net, try single-layer F.Cu in a bounded window
+FIRST (the ≤6s Probe-Order path); escalate to 2-layer/via ONLY within a bounded window (cap ~20-25mm) and
+ONLY for nets that genuinely need it (e.g. /USB_D+ B.Cu pad); NEVER board-wide. Then the negotiate
+(congestion+rip-up) runs among the 17 using these bounded fast routes. THEN the A/B can actually complete
+and the connectivity gain can be measured. The param + test + A/B harness (`scripts/_verify_gridless_first_ab.py`)
+from attempt 1 are reusable scaffolding.
