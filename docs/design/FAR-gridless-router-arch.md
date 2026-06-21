@@ -1773,3 +1773,32 @@ via-search runtime, a separate perf problem), or (2) the connectivity is placeme
 project's long-standing finding that mitayi connectivity needs placement help). The gridless router
 (M1–M3, deterministic, 381 tests, mitayi 48/89→45/73 via negotiate) is COMPLETE and at its measured
 2-layer routing ceiling.
+
+---
+
+## Probe-Order (2026-06-21) — GREEN LIGHT: residual is ORDERING-bound; gridless-first is viable
+
+Decisive probe (`scripts/probe_order.py`) on a STRIPPED mitayi (pads + board edge + drills only — no
+grid tracks, no pours), routing the 17 boxed-in signal nets with BOUNDED windows, single-layer preferred.
+
+**Result — ORDERING problem, NOT placement-bound:**
+- **All 17 have OPEN corridors on a clean board.** Routed individually (parallel test, no cross-net
+  obstacles): 17/17 route, **16/17 DRC-verified single-layer**, total 39s, max 6.0s/net, NO blowup
+  (bounded windows + single-layer keep it fast — the M3-P1.1 clean-board slowness was from forced
+  board-wide via-search; avoided here). /USB_D+ is the 17th: 3/4 pads connect F.Cu, pad[3] is B.Cu-only
+  → needs ONE via (also routable, not placement-bound).
+- The grid router fails these nets ONLY because OTHER nets' grid tracks fragment their corridors
+  (Probe-Pour: 155–175 free-space islands). On a clean board the corridors are open and routable.
+
+**Caveat (the real shape of the build):** routing the 17 SEQUENTIALLY with their own accumulating copper
+gave only 4/17 — they block EACH OTHER (intra-batch ordering; e.g. GPIO3 copper blocked GPIO4's 1.61mm
+sub-edge, which itself routes in 0.04s with no obstacle). So gridless-first needs the M2 NEGOTIATE pass
+(congestion history + bounded rip-up, cross-net aware) applied AMONG the boxed-in set — not a naive
+route-once. Realistic gain is between 4 (naive) and 17 (independent); the build will MEASURE it.
+
+**Next build — gridless-first ordering (the viable connectivity lever):** (1) identify the boxed-in
+hard-net set (nets the grid leaves unconnected with open clean-board corridors); (2) route them
+GRIDLESS-FIRST via the negotiate mechanism (congestion + rip-up among them, bounded windows, single-layer
+preferred, via where needed e.g. USB_D+); (3) mark their copper into the shared ledger; (4) grid-route
+the remainder around them. Measure unconnected vs the 48 baseline (projection: ~15-16 of 17 → meaningful
+drop below 48 — the first SUBSTANTIAL connectivity gain; to be verified by real DRC, not assumed).
