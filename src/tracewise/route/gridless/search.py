@@ -250,6 +250,7 @@ def build_visibility_graph(
     margin_mm: float,
     obstacle_polys: list,
     use_reflex_pruning: bool = True,
+    use_all_rings: bool = False,
 ) -> tuple[list[tuple[float, float]], dict[int, list[tuple[float, int]]], int, int]:
     """Build a deterministic visibility graph over the free-space corner set.
 
@@ -269,7 +270,13 @@ def build_visibility_graph(
     use_reflex_pruning:
         If True, use only reflex obstacle corners as candidate waypoints (the
         dominant O(n²)→O(r²) speedup, FIX-5b).  Caller falls back to False on
-        failure.
+        failure.  Ignored when *use_all_rings* is True.
+    use_all_rings:
+        If True, collect BOTH interior-ring AND exterior-ring vertices as corner
+        candidates.  Necessary for dense-pad (QFN) source pads whose relevant
+        turning points live on the exterior ring of a fragmented free-space
+        component.  When False (default), only interior-ring corners are used
+        (original behaviour — byte-identical to pre-fanout-escape code).
 
     Returns
     -------
@@ -283,11 +290,15 @@ def build_visibility_graph(
     _require_shapely()
 
     # Get the connected component containing start
-    from tracewise.route.gridless.geom import get_component_containing
+    from tracewise.route.gridless.geom import exterior_ring_corners, get_component_containing
     fs_component = get_component_containing(free_space, start_xy)
 
     # Extract corners
-    if use_reflex_pruning:
+    if use_all_rings:
+        # Include both interior and exterior ring vertices — needed for QFN source pads
+        # where the free-space component boundary IS the obstacle boundary.
+        corners = exterior_ring_corners(fs_component, start_xy, goal_xy, margin_mm)
+    elif use_reflex_pruning:
         corners = reflex_obstacle_corners(fs_component, start_xy, goal_xy, margin_mm)
     else:
         corners = obstacle_corners(fs_component, start_xy, goal_xy, margin_mm)

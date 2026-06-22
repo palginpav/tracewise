@@ -459,6 +459,364 @@ def _route_net_2layer(
 
 
 # ---------------------------------------------------------------------------
+# Fanout-escape route (QFN dense-component escape via strategy)
+# ---------------------------------------------------------------------------
+
+
+def route_net_fanout_escape(
+    source_xy: tuple[float, float],
+    component_cx: float,
+    component_cy: float,
+    ring_radius: float,
+    pads: list[dict],
+    net_name: str,
+    geo: dict,
+    board_bbox: tuple[float, float, float, float],
+    extra_obstacles: list | None = None,
+    board_outline: object | None = None,
+    drill_obstacles: list | None = None,
+    drill_centers: list | None = None,
+    window_mm: float = 4.0,
+    max_window_mm: float | None = None,
+    dest_xy: tuple[float, float] | None = None,
+    bcu_extra_obstacles: list | None = None,
+) -> GridlessRouteResult:
+    """Route a QFN pad out of its dense ring via a guided escape via.
+
+    Two modes controlled by ``dest_xy``:
+
+    **Stub-only mode** (``dest_xy=None``, default — for multi-pin MST integration):
+
+    1. Place a legal escape via on the ray from the component centroid through
+       the source pad, just outside the pad ring.
+    2. Route an F.Cu stub from ``source_xy`` to the escape via using the
+       ``all_rings`` corner mode (exterior + interior ring corners).
+
+    The caller injects the escape via as a virtual through-hole pad and runs
+    the MST from the non-QFN pads to it on F.Cu.  No long B.Cu run is placed,
+    so the grid router has unobstructed access to both layers.
+
+    **Full two-layer mode** (``dest_xy`` provided — for 2-pin geometry-blocked nets):
+
+    Same steps 1-2 as above, then:
+
+    3. Route a B.Cu run from the escape via to ``dest_xy``.
+
+    Use this mode only when ``dest_xy`` is a through-hole pad (``back=True``)
+    that can accept a B.Cu termination.
+
+    Parameters
+    ----------
+    source_xy:
+        Source pad centre (QFN SMD F.Cu pad).
+    dest_xy:
+        Destination pad centre for 2-pin mode.  ``None`` → stub-only mode.
+    component_cx, component_cy:
+        Component centroid.
+    ring_radius:
+        Mean distance from centroid to pad centres.
+    pads:
+        All board pads from ``extract_pads``.
+    net_name:
+        Net name (own-pad carve-out).
+    geo:
+        Project geometry dict with ``track_mm``, ``clearance_mm``, ``via_mm``,
+        ``via_drill_mm``, ``hole_clearance_mm``, ``hole_to_hole_mm``.
+    board_bbox:
+        ``(x1, y1, x2, y2)`` board bounding box.
+    extra_obstacles:
+        Pre-inflated Shapely obstacle polygons for F.Cu stub routing.
+        Should contain only F.Cu obstacles so the layer-unaware 2D Shapely
+        free-space does not block the F.Cu path with B.Cu-only copper.
+    bcu_extra_obstacles:
+        Pre-inflated Shapely obstacle polygons for B.Cu run routing.
+        When provided, used instead of ``extra_obstacles`` for the B.Cu
+        free-space computation.  Should contain all-layer copper (including
+        B.Cu routes from previously-escaped nets) to prevent B.Cu crossing.
+        When ``None``, falls back to ``extra_obstacles`` (legacy behaviour).
+    board_outline:
+        Optional board outline polygon.
+    drill_obstacles:
+        Pre-inflated drill hole obstacle circles.
+    drill_centers:
+        ``(cx, cy, drill_r)`` tuples for hole-to-hole predicate.
+    window_mm:
+        Base routing window half-margin (mm).
+    max_window_mm:
+        Hard cap on window escalation.
+
+    Returns
+    -------
+    ``GridlessRouteResult`` with F.Cu 3-tuple ``world_paths`` (layer=0) and
+    ``world_vias`` containing the single escape via, or ``ok=False`` on failure.
+    The ``stats`` dict includes ``escape_via`` for caller use as a virtual pad.
+    """
+    _require_shapely()
+    import math as _math
+    import time as _time
+
+    from tracewise.route.gridless.geom import (
+        build_windowed_free_space,
+        guided_escape_via,
+    )
+    from tracewise.route.gridless.search import astar_visgraph, build_visibility_graph
+
+    if extra_obstacles is None:
+        extra_obstacles = []
+    if drill_obstacles is None:
+        drill_obstacles = []
+    if drill_centers is None:
+        drill_centers = []
+
+    track_mm: float = geo["track_mm"]
+    clearance_mm: float = geo["clearance_mm"]
+    via_mm: float = geo.get("via_mm", 0.4)
+    via_drill: float = geo.get("via_drill_mm", 0.2)
+    hole_clearance: float = geo.get("hole_clearance_mm", 0.25)
+    hole_to_hole: float = geo.get("hole_to_hole_mm", 0.25)
+
+    bx1, by1, bx2, by2 = board_bbox
+    t0 = _time.perf_counter()
+
+    # --- Step 1: Build via-placement window and per-layer free spaces ---
+    via_window_margin = max(ring_radius + 3.0, 8.0)
+    if max_window_mm is not None:
+        via_window_margin = min(via_window_margin, max_window_mm)
+    vwx1 = max(component_cx - via_window_margin, bx1)
+    vwy1 = max(component_cy - via_window_margin, by1)
+    vwx2 = min(component_cx + via_window_margin, bx2)
+    vwy2 = min(component_cy + via_window_margin, by2)
+    via_window = (vwx1, vwy1, vwx2, vwy2)
+
+    fs_F_via, _obs_F_via = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        extra_obstacles, via_window,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=0,
+    )
+    fs_B_via, _obs_B_via = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        extra_obstacles, via_window,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
+    )
+
+    # --- Step 2: Guided escape-via placement ---
+    escape_via = guided_escape_via(
+        source_pad_xy=source_xy,
+        component_cx=component_cx,
+        component_cy=component_cy,
+        ring_radius=ring_radius,
+        fs_F=fs_F_via,
+        fs_B=fs_B_via,
+        pads=pads,
+        net_name=net_name,
+        via_mm=via_mm,
+        via_drill=via_drill,
+        clearance_mm=clearance_mm,
+        hole_clearance=hole_clearance,
+        hole_to_hole=hole_to_hole,
+        drill_centers=drill_centers,
+        window_bbox=via_window,
+    )
+
+    if escape_via is None:
+        return GridlessRouteResult(
+            ok=False,
+            reason="fanout_escape: no_legal_via_near_ring",
+            stats={"total_time_s": round(_time.perf_counter() - t0, 6)},
+        )
+
+    vx, vy = escape_via
+
+    # --- Step 3: Route F.Cu stub (source_xy → escape_via) ---
+    stub_dist = _math.hypot(vx - source_xy[0], vy - source_xy[1])
+    fcu_margin = max(stub_dist + 2.0, 3.0)
+    if max_window_mm is not None:
+        fcu_margin = min(fcu_margin, max_window_mm)
+    fcu_wx1 = max(min(source_xy[0], vx) - fcu_margin, bx1)
+    fcu_wy1 = max(min(source_xy[1], vy) - fcu_margin, by1)
+    fcu_wx2 = min(max(source_xy[0], vx) + fcu_margin, bx2)
+    fcu_wy2 = min(max(source_xy[1], vy) + fcu_margin, by2)
+    fcu_window = (fcu_wx1, fcu_wy1, fcu_wx2, fcu_wy2)
+
+    fs_F_stub, obs_F_stub = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        extra_obstacles, fcu_window,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=0,
+    )
+
+    # Try all_rings mode first (needed for QFN dense pads), then fall back
+    fcu_path: list[tuple[float, float]] | None = None
+    for use_ar in [True, False]:
+        nodes_f, adj_f, _nn, _ne = build_visibility_graph(
+            free_space=fs_F_stub,
+            start_xy=source_xy,
+            goal_xy=escape_via,
+            margin_mm=fcu_margin,
+            obstacle_polys=obs_F_stub,
+            use_reflex_pruning=(not use_ar),
+            use_all_rings=use_ar,
+        )
+        # Need at least one edge from start (idx 0)
+        if adj_f.get(0):
+            path_candidate = astar_visgraph(nodes_f, adj_f, goal_xy=escape_via)
+            if path_candidate is not None:
+                fcu_path = path_candidate
+                break
+
+    if fcu_path is None or len(fcu_path) < 2:
+        return GridlessRouteResult(
+            ok=False,
+            reason="fanout_escape: fcu_stub_failed",
+            stats={"total_time_s": round(_time.perf_counter() - t0, 6)},
+        )
+
+    # F.Cu leg (layer=0)
+    fcu_3d: list[tuple[float, float, int]] = [(x, y, 0) for x, y in fcu_path]
+
+    # --- Stub-only mode: return F.Cu stub + escape via for MST integration ---
+    if dest_xy is None:
+        total_time = round(_time.perf_counter() - t0, 6)
+        stats = {
+            "fcu_waypoints": len(fcu_3d),
+            "escape_via": escape_via,
+            "total_time_s": total_time,
+        }
+        return GridlessRouteResult(
+            ok=True,
+            world_paths=[fcu_3d],
+            world_vias=[escape_via],
+            stats=stats,
+        )
+
+    # --- Full two-layer mode: also route B.Cu run to dest_xy ---
+    # Manhattan routing strategy: prefer axis-aligned paths to minimise grid
+    # corridor occupancy.  Diagonal escape runs block a wide swath of B.Cu
+    # cells, displacing grid vias for non-target nets and causing hole_to_hole
+    # DRC violations.  Manhattan paths (vertical-first or horizontal-first)
+    # confine blockage to narrow column + J3/J4-row bands so grid routing
+    # for adjacent non-target nets has unobstructed corridors.
+    bcu_dist = _math.hypot(dest_xy[0] - vx, dest_xy[1] - vy)
+    bcu_margin = max(bcu_dist * 0.35, 5.0)
+    if max_window_mm is not None:
+        bcu_margin = min(bcu_margin, max_window_mm)
+
+    # Build the B.Cu free-space once with the largest window
+    _bcu_obs = bcu_extra_obstacles if bcu_extra_obstacles is not None else extra_obstacles
+    _bcu_margin_max = (min(bcu_margin * 2.0, max_window_mm)
+                       if max_window_mm is not None else bcu_margin * 2.0)
+    bcu_wx1 = max(min(vx, dest_xy[0]) - _bcu_margin_max, bx1)
+    bcu_wy1 = max(min(vy, dest_xy[1]) - _bcu_margin_max, by1)
+    bcu_wx2 = min(max(vx, dest_xy[0]) + _bcu_margin_max, bx2)
+    bcu_wy2 = min(max(vy, dest_xy[1]) + _bcu_margin_max, by2)
+    bcu_window_max = (bcu_wx1, bcu_wy1, bcu_wx2, bcu_wy2)
+    fs_B_run, obs_B_run = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        _bcu_obs, bcu_window_max,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
+    )
+
+    dx, dy = dest_xy
+
+    def _seg_in_free(p1: tuple[float, float], p2: tuple[float, float]) -> bool:
+        """Return True if the track centerline segment p1→p2 lies inside fs."""
+        try:
+            from shapely.geometry import LineString as _LSeg
+            seg = _LSeg([p1, p2]).buffer(track_mm / 2.0, cap_style=2)
+            return bool(fs_B_run.contains(seg))
+        except Exception:  # noqa: BLE001
+            return False
+
+    bcu_path: list[tuple[float, float]] | None = None
+
+    # Option 0: direct straight line (degenerate but avoids extra bend)
+    if _seg_in_free((vx, vy), (dx, dy)):
+        bcu_path = [(vx, vy), (dx, dy)]
+
+    if bcu_path is None:
+        # Option A: vertical-first  (vx,vy)→(vx,dy)→(dx,dy)
+        corner_a = (vx, dy)
+        if _seg_in_free((vx, vy), corner_a) and _seg_in_free(corner_a, (dx, dy)):
+            bcu_path = [(vx, vy), corner_a, (dx, dy)]
+
+    if bcu_path is None:
+        # Option B: horizontal-first  (vx,vy)→(dx,vy)→(dx,dy)
+        corner_b = (dx, vy)
+        if _seg_in_free((vx, vy), corner_b) and _seg_in_free(corner_b, (dx, dy)):
+            bcu_path = [(vx, vy), corner_b, (dx, dy)]
+
+    if bcu_path is None:
+        # Fall back to visibility-graph A* if Manhattan paths are blocked
+        for _attempt, cur_bcu_margin in enumerate([bcu_margin, bcu_margin * 2.0]):
+            if max_window_mm is not None:
+                cur_bcu_margin = min(cur_bcu_margin, max_window_mm)
+            bcu_wx1_fb = max(min(vx, dx) - cur_bcu_margin, bx1)
+            bcu_wy1_fb = max(min(vy, dy) - cur_bcu_margin, by1)
+            bcu_wx2_fb = min(max(vx, dx) + cur_bcu_margin, bx2)
+            bcu_wy2_fb = min(max(vy, dy) + cur_bcu_margin, by2)
+            bcu_window_fb = (bcu_wx1_fb, bcu_wy1_fb, bcu_wx2_fb, bcu_wy2_fb)
+
+            fs_B_fb, obs_B_fb = build_windowed_free_space(
+                pads, net_name, clearance_mm, track_mm,
+                _bcu_obs, bcu_window_fb,
+                board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
+            )
+
+            for use_reflex in [True, False]:
+                nodes_b, adj_b, _nn2, _ne2 = build_visibility_graph(
+                    free_space=fs_B_fb,
+                    start_xy=escape_via,
+                    goal_xy=dest_xy,
+                    margin_mm=cur_bcu_margin,
+                    obstacle_polys=obs_B_fb,
+                    use_reflex_pruning=use_reflex,
+                )
+                path_b = astar_visgraph(nodes_b, adj_b, goal_xy=dest_xy)
+                if path_b is not None:
+                    bcu_path = path_b
+                    break
+            if bcu_path is not None:
+                break
+
+    if bcu_path is None or len(bcu_path) < 2:
+        return GridlessRouteResult(
+            ok=False,
+            reason="fanout_escape: bcu_run_failed",
+            stats={"total_time_s": round(_time.perf_counter() - t0, 6)},
+        )
+
+    bcu_3d: list[tuple[float, float, int]] = [(x, y, 1) for x, y in bcu_path]
+
+    # Deduplicate: remove exact duplicate same-layer points at junction
+    combined: list[tuple[float, float, int]] = []
+    prev: tuple[float, float, int] | None = None
+    for wp in fcu_3d + bcu_3d:
+        if (
+            prev is not None
+            and abs(wp[0] - prev[0]) < 1e-9
+            and abs(wp[1] - prev[1]) < 1e-9
+            and wp[2] == prev[2]
+        ):
+            continue
+        combined.append(wp)
+        prev = wp
+
+    total_time = round(_time.perf_counter() - t0, 6)
+    stats = {
+        "fcu_waypoints": len(fcu_3d),
+        "bcu_waypoints": len(bcu_3d),
+        "escape_via": escape_via,
+        "total_time_s": total_time,
+    }
+
+    return GridlessRouteResult(
+        ok=True,
+        world_paths=[combined],
+        world_vias=[escape_via],
+        stats=stats,
+    )
+
+
+# ---------------------------------------------------------------------------
 # M3-P2: Deterministic Prim's MST over pads
 # ---------------------------------------------------------------------------
 

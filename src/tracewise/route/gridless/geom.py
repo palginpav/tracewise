@@ -951,3 +951,233 @@ def is_legal_via(
             return False, f"pred3_drill_to_drill (dist={dist:.4f}<{required:.4f})"
 
     return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Fanout-escape: dense-component detection
+# ---------------------------------------------------------------------------
+
+
+def detect_dense_components(pads: list[dict]) -> list[dict]:
+    """Detect "dense pad-forest" components where pads form a tight ring.
+
+    A component qualifies if it has ≥8 pads AND the pads' distances from the
+    centroid have a coefficient of variation (std/mean) < 0.20 (ring-like) AND
+    the mean pad pitch to the nearest neighbour is ≤ 0.65 mm.
+
+    Parameters
+    ----------
+    pads:
+        All board pads from ``extract_pads``.  Each pad must have keys
+        ``"ref"``, ``"x"``, ``"y"``.
+
+    Returns
+    -------
+    List of ``{"ref": str, "cx": float, "cy": float, "ring_radius": float,
+    "pads": list[dict]}`` dicts, one per dense component.  Sorted by ``ref``
+    for determinism.
+    """
+    import statistics
+
+    # Group pads by component reference
+    by_ref: dict[str, list[dict]] = {}
+    for p in pads:
+        ref = p.get("ref", "")
+        if not ref:
+            continue
+        by_ref.setdefault(ref, []).append(p)
+
+    dense: list[dict] = []
+    for ref in sorted(by_ref):
+        all_comp_pads = sorted(
+            by_ref[ref], key=lambda p: (round(p["x"], 6), round(p["y"], 6))
+        )
+
+        # Only consider SMD F.Cu pads (front=True AND back=False).
+        # This excludes:
+        #   - non-copper entries (courtyard, fab, paste-only pads):
+        #     front=False, back=False
+        #   - through-hole pads (thermal vias): front=True, back=True
+        # QFN signal pads are exclusively SMD front-copper (SMD F.Cu), so this
+        # filter preserves exactly the pads that form the ring while excluding
+        # the thermal via array that would inflate the CV and break detection.
+        comp_pads = [
+            p for p in all_comp_pads
+            if p.get("front") and not p.get("back")
+        ]
+        if len(comp_pads) < 8:
+            continue
+
+        # Centroid = mean of copper pad positions
+        xs = [p["x"] for p in comp_pads]
+        ys = [p["y"] for p in comp_pads]
+        cx = statistics.mean(xs)
+        cy = statistics.mean(ys)
+
+        # Distances from centroid
+        import math as _math
+        dists = [_math.hypot(p["x"] - cx, p["y"] - cy) for p in comp_pads]
+        mean_dist = statistics.mean(dists)
+        if mean_dist < 1e-6:
+            continue  # degenerate: all pads at same point
+
+        std_dist = statistics.pstdev(dists)  # population std dev
+        cv = std_dist / mean_dist
+
+        # Ring criterion: CV < 0.20 (tight ring around centroid)
+        if cv >= 0.20:
+            continue
+
+        # Pitch criterion: mean nearest-neighbour distance ≤ 0.65 mm
+        pitches: list[float] = []
+        for i, p in enumerate(comp_pads):
+            min_d = min(
+                _math.hypot(p["x"] - comp_pads[j]["x"], p["y"] - comp_pads[j]["y"])
+                for j in range(len(comp_pads)) if j != i
+            )
+            pitches.append(min_d)
+        mean_pitch = statistics.mean(pitches)
+        if mean_pitch > 0.65:
+            continue
+
+        ring_radius = mean_dist
+        dense.append({
+            "ref": ref,
+            "cx": cx,
+            "cy": cy,
+            "ring_radius": ring_radius,
+            "pads": comp_pads,
+        })
+
+    return dense
+
+
+# ---------------------------------------------------------------------------
+# Fanout-escape: guided escape-via placement
+# ---------------------------------------------------------------------------
+
+
+def guided_escape_via(
+    source_pad_xy: tuple[float, float],
+    component_cx: float,
+    component_cy: float,
+    ring_radius: float,
+    fs_F: object,
+    fs_B: object,
+    pads: list[dict],
+    net_name: str,
+    via_mm: float,
+    via_drill: float,
+    clearance_mm: float,
+    hole_clearance: float,
+    hole_to_hole: float,
+    drill_centers: list[tuple[float, float, float]],
+    window_bbox: tuple[float, float, float, float],
+    margin_mm: float = 0.3,
+    search_arc_deg: float = 60.0,
+    search_steps: int = 24,
+    radial_steps: int = 5,
+    radial_step_mm: float = 0.2,
+) -> tuple[float, float] | None:
+    """Place an escape via on the ray from component centroid through the source pad.
+
+    The via is placed just outside the pad ring:
+    ``target_r = ring_radius + via_mm/2 + clearance_mm + margin_mm``
+
+    If the initial position is not legal (3-predicate via legality test), searches
+    nearby candidates along the ring perimeter (±``search_arc_deg/2``) and radially
+    outward (``radial_steps × radial_step_mm``), returning the nearest legal site.
+
+    Parameters
+    ----------
+    source_pad_xy:
+        Centre of the source pad (the QFN SMD pad, F.Cu).
+    component_cx, component_cy:
+        Component centroid (centre of the pad ring).
+    ring_radius:
+        Mean distance from centroid to pad centres.
+    fs_F, fs_B:
+        Per-layer free-space polygons (from ``build_windowed_free_space``).
+    pads:
+        All board pads (for the ``is_legal_via`` drill-to-copper check).
+    net_name:
+        Net being routed (own pads excluded from the obstacle check).
+    via_mm, via_drill, clearance_mm, hole_clearance, hole_to_hole:
+        Via and clearance geometry parameters.
+    drill_centers:
+        ``(cx, cy, drill_r)`` tuples for hole-to-hole predicate.
+    window_bbox:
+        Search window ``(x1, y1, x2, y2)`` for the drill-to-copper check.
+    margin_mm:
+        Extra radial margin beyond ``ring_radius + via_mm/2 + clearance_mm``.
+    search_arc_deg:
+        Total arc (±half on each side) to search around the guided angle.
+    search_steps:
+        Number of angular steps in the search arc.
+    radial_steps:
+        Number of outward radial steps.
+    radial_step_mm:
+        Radial step size (mm).
+
+    Returns
+    -------
+    ``(x, y)`` of the nearest legal via site, or ``None`` if no legal site found.
+    """
+    _require_shapely()
+    import math as _math
+
+    sx, sy = source_pad_xy
+    dx = sx - component_cx
+    dy = sy - component_cy
+    dist_to_source = _math.hypot(dx, dy)
+    if dist_to_source < 1e-6:
+        return None
+
+    ux = dx / dist_to_source
+    uy = dy / dist_to_source
+
+    # Initial guided position: on the ray, just outside the ring
+    target_r = ring_radius + via_mm / 2.0 + clearance_mm + margin_mm
+    init_x = round((component_cx + ux * target_r) * 1e6) / 1e6
+    init_y = round((component_cy + uy * target_r) * 1e6) / 1e6
+    initial_pos = (init_x, init_y)
+
+    # Try the initial position first
+    ok, _reason = is_legal_via(
+        initial_pos, fs_F, fs_B, pads, net_name,
+        via_mm, via_drill, clearance_mm, hole_clearance, hole_to_hole,
+        drill_centers, window_bbox,
+    )
+    if ok:
+        return initial_pos
+
+    # Search arc: vary angle ± search_arc_deg/2 and radius outward
+    init_dist = _math.hypot(init_x - component_cx, init_y - component_cy)
+    init_angle_deg = _math.degrees(_math.atan2(init_y - component_cy, init_x - component_cx))
+
+    candidates: list[tuple[float, float, int, int, tuple[float, float]]] = []
+    half_arc = search_arc_deg / 2.0
+    n_arc = max(1, search_steps // 2)
+    for ai in range(-n_arc, n_arc + 1):
+        angle_deg = init_angle_deg + ai * (half_arc / n_arc if n_arc > 0 else 0.0)
+        angle_rad = _math.radians(angle_deg)
+        for ri in range(radial_steps):
+            r = init_dist + ri * radial_step_mm
+            cx2 = round((component_cx + r * _math.cos(angle_rad)) * 1e6) / 1e6
+            cy2 = round((component_cy + r * _math.sin(angle_rad)) * 1e6) / 1e6
+            dist_from_start = _math.hypot(cx2 - init_x, cy2 - init_y)
+            candidates.append((dist_from_start, abs(ai), ri, id((cx2, cy2)), (cx2, cy2)))
+
+    # Sort: nearest to initial position first, then by angle offset, then radial
+    candidates.sort(key=lambda t: (t[0], t[1], t[2]))
+
+    for _d, _ai, _ri, _id, site in candidates:
+        ok, _reason = is_legal_via(
+            site, fs_F, fs_B, pads, net_name,
+            via_mm, via_drill, clearance_mm, hole_clearance, hole_to_hole,
+            drill_centers, window_bbox,
+        )
+        if ok:
+            return site
+
+    return None

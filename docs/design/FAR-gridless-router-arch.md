@@ -1988,3 +1988,37 @@ human routes via B.Cu escape, which our router fails). PM-verified by re-running
 **The fanout-escape mechanism is GO.** Next build (the real connectivity lever): wire guided fanout-escape
 into the gridless-first path for the ~10 QFN-escape nets, measure mitayi unconnected vs 41 (attempt-3) and
 vs human 0. Separately fix the 3 F.Cu-only nets (/GPIO27,28,/XIN).
+
+---
+
+## Fanout-escape PRODUCTION (2026-06-22) — mechanism SCALES (10/17) but net REGRESSION vs attempt-3 (grid displacement)
+
+Built the QFN fanout-escape capability into the gridless-first path (dense-component detection, guided
+escape-via placement, `all_rings` corner mode, F.Cu-stub + B.Cu-run per net). `gridless_first=None`
+byte-identical; 392 tests green; ruff clean; deterministic; FAST (94s).
+
+**PM-verified A/B (my own clean re-run; the building agent's "GATE MET" was against the wrong baseline):**
+| | grid-only | attempt-3 | **fanout (this)** |
+|---|---|---|---|
+| unconnected | 48 | **41** | 45 |
+| errors | 87 | 73 | 83 |
+| of-17 connected | 0 | 4 | **10** |
+| grid nets displaced | — | 4 | **7** |
+
+**The mechanism SCALES — 10/17 target nets connect (up from attempt-3's 4)**, deterministic, fast, no
+tracks_crossing/shorting, 0 new via-hole. BUT total unconnected is **45 — WORSE than attempt-3's 41** —
+because the B.Cu escape routes displace **7 grid nets** (they hog channels near the J4 connector row).
+Math: 48 − 10 (fanout connects) + 7 (grid displaced) = 45. So this is a NET SCORECARD REGRESSION vs
+attempt-3, despite the bigger mechanism win.
+
+**The decisive insight: control the displacement and this becomes the best result.** If the 10 fanout
+connections came with 0 grid displacement → ~38 unconnected (beating attempt-3's 41). The B.Cu escapes
+are too greedy (long runs hogging connector channels). Next step (displacement control): tighten the
+B.Cu escape routing (shorter runs / better escape-via placement so the B.Cu leg doesn't cross connector
+channels), OR grid-route first then fanout-rescue only the still-unconnected nets (so grid keeps its
+channels), OR mark fanout B.Cu copper with proper clearance so grid routes around it without failing.
+Target: keep the 10/17 connections with ≤41 unconnected.
+
+**NOTE: attempt-3 (commit 9ae76ea) remains the BEST SCORECARD RESULT to date (41/73).** This fanout build
+advances the mechanism (10/17) and is the foundation for displacement control; it is committed behind the
+opt-in `gridless_first` flag (default OFF = byte-identical), so default behavior is unaffected.
