@@ -1902,3 +1902,25 @@ displaced (/GPIO1,2,16,17) — net unconnected is still −7 overall. (3) Only 4
 (the negotiate-among-17 + grid capacity limits the rest); more would need better intra-17 ordering or
 grid-capacity work. Net result stands: a real, verified, net-positive connectivity+legality gain from
 gridless-first ordering — the payoff of the chapter.
+
+---
+
+## Intra-17 ordering probe (2026-06-22) — ordering is NOT the lever; the 13 residual are geometry-bound
+
+Probed 7 ordering/negotiation strategies for the 17 boxed-in nets on a clean board (`scripts/probe_intra17_order.py`).
+**No strategy beats attempt-3's 4/17.** Findings:
+- The 17 split by code path: **3 two-pin nets** (/QSPI_SCLK, /QSPI_SD2, Net-(U3-USB-DP)) via `route_gridless_set`
+  — connect 3/3 regardless of order (non-overlapping corridors; ordering irrelevant). **14 multi-pin nets**
+  (/GPIO*, /RUN, /SWCLK, /XIN, /USB_D+) via `route_net_multipin`.
+- **The multi-pin nets are GEOMETRY-blocked, not ordering-blocked:** 11/14 only PARTIALLY connect even on a
+  CLEAN board — their MST sub-edges fail because the corridors through the RP2040 QFN pad forest are
+  geometrically too tight (the GPIO nets have through-hole pads in opposite board corners + an SMD pad by
+  the QFN; the tree must thread the dense pad region). Ordering shifts WHICH nets fully connect, not HOW MANY.
+- Best variant tried (smallest-span multi-pin order): 5/17 on clean board BUT full A/B gave 45 unc (vs 41) —
+  the different copper positions displaced more grid nets → net LOSS. REVERTED (production unchanged).
+
+**Conclusion: gridless-first is at its mitayi ceiling at 41 unconnected (attempt-3's 48/87→41/73 WIN stands).**
+The residual 13 nets need PLACEMENT changes (the QFN pad-forest geometry that makes their MST sub-edges
+un-routable), not routing/ordering. This re-confirms (a third independent time, via a different mechanism)
+that mitayi's remaining connectivity is PLACEMENT-bound — consistent with the project's long-standing finding.
+Further routing-side tuning has diminishing returns; the next real lever is placement-aware work.
