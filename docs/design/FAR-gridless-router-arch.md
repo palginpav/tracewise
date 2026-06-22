@@ -1924,3 +1924,38 @@ The residual 13 nets need PLACEMENT changes (the QFN pad-forest geometry that ma
 un-routable), not routing/ordering. This re-confirms (a third independent time, via a different mechanism)
 that mitayi's remaining connectivity is PLACEMENT-bound — consistent with the project's long-standing finding.
 Further routing-side tuning has diminishing returns; the next real lever is placement-aware work.
+
+---
+
+## Probe-Human (2026-06-22) — OVERTURNS "placement-bound": the gap is ROUTING CAPABILITY (QFN fanout-escape)
+
+Parsed the SHIPPED human mitayi board (its 0/0 routing). The human routes ALL 13 nets our router fails,
+on the SAME placement. **The three prior "placement-bound" conclusions were WRONG** — the real gap is our
+router's capability, NOT the placement.
+
+**What the human does (per-net data from the file):**
+- Same track width as us (0.2mm) — geometry is NOT the gap.
+- **10/13 failing nets use QFN FANOUT-VIA ESCAPE:** a short F.Cu stub exits the RP2040 (U3) QFN pad
+  OUTWARD (perpendicular to the die edge) → a 0.4mm/0.2mm-drill via placed **4–8mm from U3 center**
+  (outside the ~3.9mm pad ring) → a B.Cu run to the through-hole connector pad. The human does NOT thread
+  the QFN pad forest (0.2mm pad gaps — physically impossible); it ESCAPES to B.Cu. (3/13 — /GPIO27,28,/XIN
+  — are F.Cu-only short routes.)
+
+**Our router's gap (root cause — and it explains the bounded-vs-board-wide tension):** we HAVE 2-layer
+F.Cu→via→B.Cu support, but the via-candidate search is bounded to each net's pad-to-pad bbox, while the
+escape via sits FAR from it (out by the QFN edge). Our bounded windows (which made gridless-first FAST)
+PREVENT finding the escape via; board-wide search finds it but blows up (M3-P1.1). The human's insight:
+the escape via is at a SPECIFIC location (just outside the dense component's pad ring), so a TARGETED
+search there — not board-wide — is both correct and fast.
+
+**This redirects the whole effort.** mitayi connectivity is NOT placement-bound; it needs a **component
+fanout-escape capability**: for a net exiting a dense component (QFN), place a fanout via just outside the
+component's pad ring (bounded targeted search near the component edge), then route B.Cu to the
+destination. Bounded + fast + matches the human. Plus a SEPARATE simpler bug: the 3 F.Cu-only nets
+(/GPIO27,28,/XIN) should route single-layer but don't — an obstacle-inflation / visibility-graph issue.
+
+**Next build — QFN fanout-escape (the real lever):** (1) detect nets exiting a dense component's pad
+forest; (2) place a legal escape via just outside the pad ring (targeted bounded search at the component
+perimeter, perpendicular to the pad); (3) route the short F.Cu stub pad→via and the B.Cu via→destination
+(bounded windows); (4) measure unconnected vs 41 (attempt-3) and vs the human 0. Also fix the 3 F.Cu-only
+failures separately.
