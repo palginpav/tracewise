@@ -60,7 +60,7 @@ class GridlessNetRoute(NetRoute):
     world_vias: list[tuple[float, float]] = field(default_factory=list)
 
     def rasterize_into_grid(self, grid: Grid) -> None:
-        """Populate ``self.cells`` from ``self.world_paths`` and ``self.world_vias``.
+        """Populate ``self.cells`` and ``self.via_sites`` from world paths and vias.
 
         Walk each segment of each world path, rasterize it to the grid cells it
         occupies (Bresenham-style: sample every ``pitch/2`` along the segment to
@@ -68,15 +68,21 @@ class GridlessNetRoute(NetRoute):
         2-tuple ``(x, y)`` waypoints (single-layer) and 3-tuple ``(x, y, layer)``
         waypoints (2-layer M3 routes).
 
-        Via sites are rasterized onto both layers (0 and 1) so subsequent
-        grid-routed nets see the via copper as occupied cells.
+        Via sites are placed into ``self.via_sites`` (not ``self.cells``) so that
+        ``_mark`` applies the larger ``via_halfwidth_cells`` inflation to them.
+        Via copper rings extend to ``via_mm/2`` (e.g. 0.3 mm), which requires a
+        blocking radius of ``via_mm/2 + clearance + track_mm/2`` — that is exactly
+        ``via_halfwidth_cells``.  Placing via cells in ``cells`` would give only
+        ``halfwidth_cells`` inflation (correct for track segments, too small for
+        vias), allowing grid tracks to route within the via copper ring.
 
         Inflation is **not** applied here — ``_mark`` applies the
-        ``halfwidth_cells`` box inflation when writing to ``grid.cells``.  This
-        method only populates the ``cells`` set (the centerline cells), which is
-        what ``_mark`` iterates.
+        ``halfwidth_cells`` box inflation to ``cells`` and the
+        ``via_halfwidth_cells`` disc inflation to ``via_sites``.  This method
+        only populates those two sets (centerline cells and via centers).
 
-        Already-populated ``cells`` are replaced, not appended (idempotent call).
+        Already-populated ``cells`` and ``via_sites`` are replaced, not appended
+        (idempotent call).
         """
         cells: set[tuple[int, int, int]] = set()
 
@@ -114,13 +120,16 @@ class GridlessNetRoute(NetRoute):
                     iy, ix = grid.to_cell(x, y)
                     cells.add((layer, *grid.clamp_cell(iy, ix)))
 
-        # Rasterize via sites onto BOTH layers so grid-routed nets avoid via copper
+        # Rasterize via sites into via_sites (not cells) so _mark applies the
+        # larger via_halfwidth_cells inflation radius.  _mark marks all layers
+        # for via_sites entries, which is correct (via copper is on both layers).
+        via_sites: set[tuple[int, int]] = set()
         for vx, vy in self.world_vias:
             iy, ix = grid.to_cell(vx, vy)
-            for lyr in (0, 1):
-                cells.add((lyr, *grid.clamp_cell(iy, ix)))
+            via_sites.add(grid.clamp_cell(iy, ix))
 
         self.cells = cells
+        self.via_sites = via_sites
 
 
 def to_gridless_netroute(

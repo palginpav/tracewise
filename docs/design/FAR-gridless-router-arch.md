@@ -1865,3 +1865,40 @@ their copper is mutually clearance-legal); (2) their copper must be marked into 
 PROPER clearance inflation so the subsequent grid routing stays clearance-away (eliminating gridless-vs-grid
 shorts); (3) avoid displacing grid nets that were fine (the /GPIO1,2 regression). Target: keep the −6 (or
 better) connectivity gain with errors ≤ ~89. The perf path from attempt 2 is the foundation.
+
+---
+
+## Gridless-first ordering — BUILD ATTEMPT 3 (2026-06-22): WIN — mitayi 48/87 → 41/73 (better on BOTH axes)
+
+Cross-substrate clearance fixes (clearance-modeling only; perf path from attempt 2 unchanged):
+- `adapter.py`: via centers go into `via_sites` (not `cells`) so `_mark` applies `via_halfwidth_cells=6`
+  (via_mm/2 + clearance + track_mm/2 = 0.6mm) instead of the track `halfwidth_cells=3` (0.3mm) — gridless
+  vias now reserve proper clearance in the shared grid ledger.
+- `multi.py`: gridless-vs-gridless obstacle inflation corrected to `track_mm + clearance_mm` (was
+  track_mm/2 + clearance_mm) and via inflation to `via_mm/2 + clearance_mm + track_mm/2`; RE-ENABLED
+  `_mark` for multi-pin gridless-first copper so the grid router routes clearance-away from it.
+
+**PM-verified A/B (canonical, reproduced independently):**
+| metric | grid-only | gridless_first={17} | delta |
+|--------|----------:|--------------------:|------:|
+| unconnected | 48 | **41** | **−7** ✅ |
+| errors | 87 | **73** | **−14** ✅ |
+| tracks_crossing | 0 | **0** | 0 (attempt-2's +19 ELIMINATED) |
+| shorting_items | 0 | **0** | 0 (attempt-2's +19 ELIMINATED) |
+| solder_mask_bridge | 15 | 2 | −13 |
+| hole_clearance | 32 | 26 | −6 |
+| hole_to_hole | 14 | 18 | +4 (grid via-near-pad, pre-existing class) |
+| copper_edge_clearance | 0 | 0 | 0 |
+
+**This is the WIN of the FAR arc: the board is BETTER ON BOTH PRIMARY AXES** — fewer unconnected AND
+fewer total errors. 4/17 boxed-in nets connect (both QSPI nets + /GPIO18 + Net-(U3-USB-DP)); routing
+deterministic (unc=41 both runs; the ±1 error count is KiCad zone-fill noise); bounded runtime (~155s).
+`gridless_first=None` byte-identical; 392 tests green; `ruff check .` clean.
+
+**Residual / honest caveats:** (1) `hole_to_hole +4` — all from the GRID router placing vias near
+component through-holes (GND/VBUS/GPIO7/12/21/24 — none are gridless nets); the grid A* has no
+hole_to_hole enforcement for via placement (pre-existing: baseline already has 14). (2) 4 grid nets
+displaced (/GPIO1,2,16,17) — net unconnected is still −7 overall. (3) Only 4/17 target nets connect
+(the negotiate-among-17 + grid capacity limits the rest); more would need better intra-17 ordering or
+grid-capacity work. Net result stands: a real, verified, net-positive connectivity+legality gain from
+gridless-first ordering — the payoff of the chapter.

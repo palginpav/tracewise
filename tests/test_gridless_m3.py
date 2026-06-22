@@ -266,7 +266,15 @@ def test_m3_rasterize_3tuple_waypoints() -> None:
 # ---------------------------------------------------------------------------
 
 def test_m3_rasterize_via_sites_both_layers() -> None:
-    """world_vias entries must appear as cells on both layer 0 and layer 1."""
+    """world_vias entries must appear in via_sites (not cells) for correct inflation.
+
+    Via centres go into via_sites (layer-less (iy, ix) tuples) so that _mark
+    applies the larger via_halfwidth_cells inflation radius.  Via copper rings
+    extend to via_mm/2, which requires blocking radius via_mm/2 + clearance +
+    track_mm/2 — that is via_halfwidth_cells, not halfwidth_cells.  Placing them
+    in cells would use the too-small halfwidth_cells radius, allowing grid tracks
+    to enter the via copper ring clearance zone (tracks_crossing / clearance DRC).
+    """
     from tracewise.route.engine.grid import Grid
     from tracewise.route.engine.multi import Net
     from tracewise.route.gridless.adapter import GridlessNetRoute
@@ -282,8 +290,14 @@ def test_m3_rasterize_via_sites_both_layers() -> None:
 
     iy_via, ix_via = grid.to_cell(5.0, 1.0)
     iy_via, ix_via = grid.clamp_cell(iy_via, ix_via)
-    assert (0, iy_via, ix_via) in nr.cells, "Via cell must be on layer 0"
-    assert (1, iy_via, ix_via) in nr.cells, "Via cell must be on layer 1"
+    # Via must be in via_sites (layer-less tuple) so _mark applies via_halfwidth_cells
+    assert (iy_via, ix_via) in nr.via_sites, (
+        "Via centre must be in via_sites so _mark uses via_halfwidth_cells inflation"
+    )
+    # via_sites entries are layer-less (iy, ix) tuples, not (layer, iy, ix)
+    assert all(len(s) == 2 for s in nr.via_sites), (
+        "via_sites must contain (iy, ix) 2-tuples, not layer-prefixed tuples"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -538,7 +538,10 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                 # nets' copper so multi-pin nets route around them.
                 _track_mm_gf = geo.get("track_mm", 0.2)
                 _clr_mm_gf = geo.get("clearance_mm", 0.2)
-                _inflate_gf = _track_mm_gf / 2.0 + _clr_mm_gf
+                # Correct inflation for track-to-track centerline distance:
+                # old_track_mm/2 + clearance_mm + new_track_mm/2 = track_mm + clearance_mm
+                # (FIX: was track_mm/2 + clearance_mm — under-inflated by track_mm/2)
+                _inflate_gf = _track_mm_gf + _clr_mm_gf
                 _via_mm_gf = geo.get("via_mm", 0.6)
                 _gf_extra_obstacles: list = []
                 try:
@@ -561,7 +564,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                                     except Exception:  # noqa: BLE001
                                         pass
                         if hasattr(_rnr, "world_vias") and _rnr.world_vias:
-                            _via_inflate = _via_mm_gf / 2.0 + _clr_mm_gf
+                            # via_mm/2 + clearance_mm + track_mm/2 (FIX: was via_mm/2 + clr)
+                            _via_inflate = _via_mm_gf / 2.0 + _clr_mm_gf + _track_mm_gf / 2.0
                             for _vx, _vy in _rnr.world_vias:
                                 try:
                                     _vc = _gf_snap(
@@ -621,31 +625,19 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                             _mp_net, result_mp.world_paths, grid,
                             world_vias=result_mp.world_vias,
                         )
-                        # DO NOT call _mark(grid, nr, 1) here.
-                        # Marking gridless-first copper into grid.cells / grid.hard
-                        # forces the grid router to treat the gridless tracks as hard
-                        # obstacles.  On mitayi, this displaces GND/VBUS/GPIO7 vias
-                        # into the via-exclusion zone around J3/J4 connector PTH pads,
-                        # creating new hole_to_hole DRC violations (gate blocker).
+                        # Mark multi-pin gridless-first copper into the shared grid
+                        # ledger so the grid router routes AROUND it, preventing
+                        # tracks_crossing / shorting_items DRC violations.
                         #
-                        # By NOT marking, the grid sees no gridless copper and routes
-                        # as if it isn't there.  The gridless tracks are still written
-                        # to the PCB file (providing electrical connectivity, so DRC
-                        # counts these nets as connected), but the grid router is free
-                        # to route its own paths without displacement.
-                        #
-                        # Trade-off: grid tracks may overlap gridless tracks on the same
-                        # layer → DRC "clearance" violations (copper-to-copper).  Those
-                        # violations are NOT gated (only hole_clearance and hole_to_hole
-                        # are gated), so this is an acceptable cost.
-                        #
-                        # The _gf_extra_obstacles list still accumulates Shapely geometry
-                        # for inter-gridless-net avoidance (so subsequent gridless nets
-                        # don't route through earlier ones' copper).  The grid phase
-                        # does not use _gf_extra_obstacles.
+                        # Via cells are now correctly routed to via_sites (not cells)
+                        # in rasterize_into_grid, so _mark applies via_halfwidth_cells
+                        # (larger) inflation for via copper — preventing grid tracks
+                        # from entering the via copper ring clearance zone.
+                        _mark(grid, nr, 1)
                         results[_mp_net_name] = nr
 
-                        # Accumulate this net's copper as obstacles for later nets
+                        # Accumulate this net's copper as Shapely obstacles for
+                        # subsequent multi-pin nets in this pass.
                         try:
                             from shapely.geometry import LineString as _LStr2
                             from shapely.geometry import Point as _Pt2
@@ -661,7 +653,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                                         _gf_extra_obstacles.append(_ls2)
                                     except Exception:  # noqa: BLE001
                                         pass
-                            _via_inf2 = _via_mm_gf / 2.0 + _clr_mm_gf
+                            # via_mm/2 + clearance_mm + track_mm/2 (FIX: was via_mm/2+clr)
+                            _via_inf2 = _via_mm_gf / 2.0 + _clr_mm_gf + _track_mm_gf / 2.0
                             for _vx2, _vy2 in result_mp.world_vias:
                                 try:
                                     _vc2 = _snap_mp(
@@ -688,11 +681,10 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     # rip-up in M2 — they are already in grid.hard so the grid router avoids them).
     #
     # gridless_first SUCCESSFULLY routed nets are excluded from routed — they must
-    # not be ripped up.  Gridless-first nets are NOT marked into the grid
-    # (grid.cells / grid.hard) so the grid router cannot see their copper.  This
-    # prevents via displacement near PTH connector pads (hole_to_hole violations).
-    # Excluding them from routed ensures the grid rip-up loop never touches them,
-    # keeping their PCB copper intact.
+    # not be ripped up.  Gridless-first nets are marked into the shared grid ledger
+    # (via _mark) so the grid router routes AROUND their copper.  Excluding them
+    # from the rip-up pool (routed list) ensures the grid rip-up loop never selects
+    # them as victims, keeping their PCB copper intact.
     # gridless_first FAILED nets (ok=False) remain in the grid queue so the grid
     # engine gets a second chance to connect them.
     _gf_fully_routed = {
