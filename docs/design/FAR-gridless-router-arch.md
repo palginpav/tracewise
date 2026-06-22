@@ -1959,3 +1959,32 @@ forest; (2) place a legal escape via just outside the pad ring (targeted bounded
 perimeter, perpendicular to the pad); (3) route the short F.Cu stub pad→via and the B.Cu via→destination
 (bounded windows); (4) measure unconnected vs 41 (attempt-3) and vs the human 0. Also fix the 3 F.Cu-only
 failures separately.
+
+---
+
+## Spike-Fanout (2026-06-22) — GO: guided QFN escape-via mechanism validated (PM-verified)
+
+`scripts/spike_fanout_escape.py` — validated the guided escape-via fanout mechanism on /GPIO3 (a net the
+human routes via B.Cu escape, which our router fails). PM-verified by re-running:
+- **Net CONNECTS:** `/GPIO3` net_unconnected **1 → 0** (the per-net ground truth).
+- **Guided escape via:** placed on the ray from U3 center through the source QFN pad, just outside the
+  pad ring at **4.96mm** from U3 center (human: 5.74mm — same strategy, both in the 4–8mm band). Legal
+  under the 3-predicate via test.
+- F.Cu stub (source pad → via) + B.Cu run (via → J3 dest), both all-legal. **0 new DRC errors, 0
+  via hole_clearance/hole_to_hole.** Byte-identical deterministic (same-process + subprocess). 4.2s.
+- Via geometry confirmed 0.4mm/0.2mm (project value, not the 0.6mm fallback).
+
+**Production design requirements surfaced (for the build):**
+1. **Guided via placement:** ray from dense-component centroid through the source pad, at radius
+   (ring_radius + via_mm/2 + clearance + margin); snap to nearest legal 3-predicate site in a SMALL
+   bounded neighborhood. Bounded + fast (no board-wide search) — this is the fix for the
+   bounded-vs-board-wide tension.
+2. **`all_rings` corner mode (REQUIRED):** the standard `obstacle_corners()` (interior rings only) yields
+   0 start-edges for a QFN source pad (its visible corners are on the free-space EXTERIOR ring shaped by
+   neighbor pads). The F.Cu stub only routed once exterior-ring corners were included. Production
+   `build_visibility_graph` must support an all-rings mode for dense-pad source pads.
+3. Per-net escape: detect the net's pad inside a dense component → guided via → F.Cu stub + B.Cu run.
+
+**The fanout-escape mechanism is GO.** Next build (the real connectivity lever): wire guided fanout-escape
+into the gridless-first path for the ~10 QFN-escape nets, measure mitayi unconnected vs 41 (attempt-3) and
+vs human 0. Separately fix the 3 F.Cu-only nets (/GPIO27,28,/XIN).
