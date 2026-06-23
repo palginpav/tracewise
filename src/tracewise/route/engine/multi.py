@@ -912,6 +912,7 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               gridless_negotiate: bool = False,
               gridless_rescue: bool = False,
               gridless_first: set[str] | None = None,
+              gridless_first_order: list[str] | None = None,
               coopt: set[str] | None = None,
               coopt_kwargs: dict | None = None,
               **_legacy) -> dict[str, NetRoute]:
@@ -1426,18 +1427,35 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                 except Exception:  # noqa: BLE001 — Shapely absent or obstacle build failed
                     pass
 
+                # Seed _gf_extra_obstacles with pre-routed copper passed via
+                # gridless_kwargs["extra_gridless_obstacles"].  This is used by
+                # the escape-first probe mode: escape routes (pre-committed before
+                # route_all) pass their Shapely obstacles here so the multi-pin
+                # gridless_first pass avoids them.  Without this seed the escape
+                # copper is only in the grid (via _mark) and route_net_multipin
+                # (which uses Shapely free-space) would not see it, causing
+                # shorting_items / tracks_crossing DRC violations.
+                #
+                # Default-safe: when gridless_kwargs is None or has no
+                # extra_gridless_obstacles key the seed is an empty list, so
+                # existing callers that don't supply escape obstacles are unaffected.
+                _gls_seed = gk.get("extra_gridless_obstacles") or []
+                if _gls_seed:
+                    _gf_extra_obstacles.extend(_gls_seed)
+
                 _drill_centers_gf = gk.get("drill_centers") or []
 
-                # Route multi-pin nets in sorted order (deterministic)
-                # Pre-compute dense components once (not per-net) for efficiency.
-                from tracewise.route.gridless.geom import detect_dense_components
-                from tracewise.route.gridless.route import route_net_fanout_escape
-                _gf_dense_comps = detect_dense_components(pads)
-                _gf_dense_by_ref: dict[str, dict] = {
-                    d["ref"]: d for d in _gf_dense_comps
-                }
-
-                for _mp_net_name in sorted(gridless_nets):
+                # Route multi-pin nets in sorted order (deterministic).
+                # Uses attempt-3's proven approach: simple route_net_multipin with
+                # a single _gf_extra_obstacles list (all copper, F.Cu + B.Cu) so
+                # subsequent nets route around all previously committed copper.
+                # gridless_first_order overrides the default sorted() order when set.
+                _gf_mp_iter = (
+                    gridless_first_order
+                    if gridless_first_order is not None
+                    else sorted(gridless_nets)
+                )
+                for _mp_net_name in _gf_mp_iter:
                     _mp_net = by_name_all.get(_mp_net_name)
                     if _mp_net is None or len(_mp_net.pads) < 3:
                         continue  # 2-pin nets handled above; K<2 never routes
@@ -1455,286 +1473,34 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
 
                     _mp_t0 = _mp_time.perf_counter()
 
-                    # ----------------------------------------------------------
-                    # Multi-pin fanout-escape: if exactly one pad belongs to a
-                    # dense QFN component, route that pad via the guided escape
-                    # strategy first, then route the remaining pads via the
-                    # standard multi-pin MST.
-                    # ----------------------------------------------------------
-                    _mp_all_paths: list = []
-                    _mp_all_vias: list = []
-                    # _mp_extra_obstacles: full set (F.Cu + B.Cu) for general routing.
-                    # _mp_fcu_obstacles: F.Cu-only subset for fanout stub routing
-                    #   (fanout uses 2D Shapely free-space, so B.Cu obstacles must
-                    #   be excluded to avoid wrongly blocking F.Cu paths).
-                    _mp_extra_obstacles = list(_gf_extra_obstacles)
-                    _mp_fcu_obstacles = list(_gf_fcu_obstacles)
-                    _mp_fanout_done = False
-
-                    if _gf_dense_by_ref:
-                        # Split pads into QFN-source and non-QFN
-                        _qfn_pads = [
-                            _p for _p in _mp_pads_world
-                            if _p.get("ref", "") in _gf_dense_by_ref
-                               and _p.get("front") and not _p.get("back")
-                        ]
-                        _non_qfn_pads = [
-                            _p for _p in _mp_pads_world
-                            if _p not in _qfn_pads
-                        ]
-                        # Strategy applies when there is EXACTLY ONE QFN source pad
-                        # AND at least one through-hole (back=True) non-QFN pad.
-                        # The B.Cu run from the escape via must land on a through-
-                        # hole pad (copper on both layers).  SMD-only destinations
-                        # cannot terminate a B.Cu run, so those nets fall back to
-                        # standard multi-pin F.Cu routing.
-                        _th_non_qfn_pads = [
-                            _p for _p in _non_qfn_pads
-                            if _p.get("back")  # through-hole: copper on both layers
-                        ]
-                        if len(_qfn_pads) == 1 and len(_th_non_qfn_pads) >= 1:
-                            import math as _fe_math
-                            _qfn_p = _qfn_pads[0]
-                            _qfn_xy = (_qfn_p["x"], _qfn_p["y"])
-                            _dcomp_fe = _gf_dense_by_ref[_qfn_p["ref"]]
-                            # Nearest through-hole pad as B.Cu run destination.
-                            # Through-hole pads have copper on B.Cu, so the B.Cu
-                            # run from the escape via can land there legally.
-                            # Using B.Cu for the long leg keeps F.Cu free for
-                            # non-target GPIO nets routing in the same corridor.
-                            _non_qfn_sorted = sorted(
-                                _th_non_qfn_pads,
-                                key=lambda _p: _fe_math.hypot(
-                                    _p["x"] - _qfn_xy[0], _p["y"] - _qfn_xy[1]
-                                ),
-                            )
-                            _nearest_dest = _non_qfn_sorted[0]
-                            _nearest_xy = (_nearest_dest["x"], _nearest_dest["y"])
-                            # Full two-layer mode: F.Cu stub + B.Cu run to dest.
-                            # Two separate obstacle lists are used:
-                            # - extra_obstacles=_mp_fcu_obstacles: F.Cu only.
-                            #     Passed to the F.Cu stub search.  B.Cu paths
-                            #     excluded: Shapely 2D free-space is layer-
-                            #     unaware, so B.Cu obstacles would wrongly
-                            #     block the F.Cu stub on a different layer.
-                            # - bcu_extra_obstacles=_mp_extra_obstacles: all.
-                            #     Passed to the B.Cu run search.  Includes
-                            #     B.Cu paths from previous target nets so the
-                            #     new B.Cu run doesn't cross them.
-                            result_fe = route_net_fanout_escape(
-                                source_xy=_qfn_xy,
-                                component_cx=_dcomp_fe["cx"],
-                                component_cy=_dcomp_fe["cy"],
-                                ring_radius=_dcomp_fe["ring_radius"],
-                                pads=pads,
-                                net_name=_mp_net_name,
-                                geo=geo,
-                                board_bbox=board_bbox,
-                                extra_obstacles=_mp_fcu_obstacles,
-                                board_outline=neg_board_outline,
-                                drill_obstacles=neg_drill_obstacles or [],
-                                drill_centers=_drill_centers_gf,
-                                max_window_mm=_gf_max_window,
-                                dest_xy=_nearest_xy,  # B.Cu run to TH connector
-                                bcu_extra_obstacles=_mp_extra_obstacles,
-                            )
-                            if result_fe.ok and result_fe.world_paths:
-                                _mp_all_paths.extend(result_fe.world_paths)
-                                _mp_all_vias.extend(result_fe.world_vias or [])
-                                _mp_fanout_done = True
-                                # Accumulate fanout route as obstacles for
-                                # subsequent target-net routing in this pass.
-                                #
-                                # Two separate lists are maintained:
-                                # - _mp_extra_obstacles: ALL copper (F.Cu + B.Cu)
-                                #     Used for standard multi-pin and for the
-                                #     B.Cu run in route_net_fanout_escape.
-                                #     Prevents B.Cu-to-B.Cu crossing between
-                                #     different target nets' escape routes.
-                                # - _mp_fcu_obstacles: F.Cu ONLY
-                                #     Passed to route_net_fanout_escape as
-                                #     extra_obstacles for the F.Cu stub search.
-                                #     B.Cu paths excluded because the Shapely
-                                #     2D free-space is layer-unaware; including
-                                #     B.Cu obstacles would wrongly block the
-                                #     F.Cu stub on a different physical layer.
-                                #
-                                # Escape vias are added to BOTH (through-hole
-                                # copper exists on both layers).
-                                try:
-                                    from shapely.geometry import LineString as _LStrFe
-                                    from shapely.geometry import Point as _PtFe
-
-                                    from tracewise.route.gridless.geom import (
-                                        snap as _snap_fe,
-                                    )
-                                    for _fewp in result_fe.world_paths:
-                                        if len(_fewp) < 2:
-                                            continue
-                                        # Add LAYER-SEPARATED sub-segments to obstacle
-                                        # lists.  The B.Cu free-space for subsequent
-                                        # nets must NOT include F.Cu-only copper, as the
-                                        # 2D Shapely free-space is layer-unaware.  A
-                                        # combined 2D projection (F.Cu stub + B.Cu run)
-                                        # would wrongly block B.Cu routing in areas
-                                        # where only F.Cu copper physically exists.
-                                        #
-                                        # _mp_extra_obstacles: B.Cu sub-segments ONLY.
-                                        #   Used as bcu_extra_obstacles for the B.Cu
-                                        #   run in the next fanout call — prevents
-                                        #   B.Cu-to-B.Cu crossing.
-                                        # _mp_fcu_obstacles: F.Cu sub-segments ONLY.
-                                        #   Used as extra_obstacles for the F.Cu stub
-                                        #   routing — prevents F.Cu-to-F.Cu crossing.
-                                        _fcu_seg: list[tuple[float, float]] = []
-                                        _bcu_seg: list[tuple[float, float]] = []
-                                        for _fewpt in _fewp:
-                                            _wp_layer = (
-                                                _fewpt[2] if len(_fewpt) == 3 else 0
-                                            )
-                                            if _wp_layer == 0:
-                                                _fcu_seg.append(
-                                                    (_fewpt[0], _fewpt[1])
-                                                )
-                                            else:
-                                                # Flush any accumulated F.Cu segment
-                                                if len(_fcu_seg) >= 2:
-                                                    try:
-                                                        _fe_ls_f = _snap_fe(
-                                                            _LStrFe(_fcu_seg).buffer(
-                                                                _inflate_gf, cap_style=2
-                                                            )
-                                                        )
-                                                        _mp_fcu_obstacles.append(_fe_ls_f)
-                                                    except Exception:  # noqa: BLE001
-                                                        pass
-                                                    _fcu_seg = []
-                                                _bcu_seg.append(
-                                                    (_fewpt[0], _fewpt[1])
-                                                )
-                                        # Flush final F.Cu segment (if path ends on F.Cu)
-                                        if len(_fcu_seg) >= 2:
-                                            try:
-                                                _fe_ls_f = _snap_fe(
-                                                    _LStrFe(_fcu_seg).buffer(
-                                                        _inflate_gf, cap_style=2
-                                                    )
-                                                )
-                                                _mp_fcu_obstacles.append(_fe_ls_f)
-                                            except Exception:  # noqa: BLE001
-                                                pass
-                                        # Flush B.Cu segment → _mp_extra_obstacles only
-                                        if len(_bcu_seg) >= 2:
-                                            try:
-                                                _fe_ls_b = _snap_fe(
-                                                    _LStrFe(_bcu_seg).buffer(
-                                                        _inflate_gf, cap_style=2
-                                                    )
-                                                )
-                                                _mp_extra_obstacles.append(_fe_ls_b)
-                                            except Exception:  # noqa: BLE001
-                                                pass
-                                    _via_inf_fe = (
-                                        _via_mm_gf / 2.0 + _clr_mm_gf + _track_mm_gf / 2.0
-                                    )
-                                    for _vxfe, _vyfe in (result_fe.world_vias or []):
-                                        try:
-                                            _fe_vc = _snap_fe(
-                                                _PtFe(_vxfe, _vyfe).buffer(
-                                                    _via_inf_fe, resolution=16
-                                                )
-                                            )
-                                            _mp_extra_obstacles.append(_fe_vc)
-                                            _mp_fcu_obstacles.append(_fe_vc)
-                                        except Exception:  # noqa: BLE001
-                                            pass
-                                except Exception:  # noqa: BLE001
-                                    pass
-
-                    # Now route the remaining non-QFN pads via standard multi-pin.
-                    # Fanout-escape (B.Cu mode) connects QFN pad → escape via → nearest
-                    # TH connector on B.Cu.  The remaining non-QFN pads just need F.Cu
-                    # MST among themselves — the nearest TH pad is already in the set,
-                    # so all pads become connected transitively through it.
-                    # No fanout or fanout failed: route ALL pads via multi-pin.
-                    if _mp_fanout_done:
-                        # Only run MST if there are at least 2 non-QFN pads.
-                        # (1 pad: nothing to connect; the QFN already connects via B.Cu)
-                        _fanout_mst_ok = False
-                        if len(_non_qfn_pads) >= 2:
-                            result_rest = route_net_multipin(
-                                pads_of_net=_non_qfn_pads,
-                                net_name=_mp_net_name,
-                                all_pads=pads,
-                                geo=geo,
-                                board_bbox=board_bbox,
-                                extra_obstacles=_mp_extra_obstacles,
-                                window_mm=_gf_base_window,
-                                board_outline=neg_board_outline,
-                                drill_obstacles=neg_drill_obstacles,
-                                drill_centers=_drill_centers_gf,
-                                max_window_mm=_gf_max_window,
-                                allow_via=False,
-                            )
-                            # Only accept a FULLY connected MST: if any sub-edge
-                            # failed (ok=False), the net is partially routed and
-                            # we discard the result.  A partial stub + partial MST
-                            # would mark the net as gridless-done and exclude it
-                            # from grid routing, leaving it permanently unconnected.
-                            if result_rest.ok and result_rest.world_paths:
-                                _mp_all_paths.extend(result_rest.world_paths)
-                                _mp_all_vias.extend(result_rest.world_vias or [])
-                                _fanout_mst_ok = True
-                        else:
-                            # Only 1 non-QFN pad (the nearest TH): fanout B.Cu run
-                            # already connects QFN→via→connector.  MST not needed.
-                            _fanout_mst_ok = True
-                        if not _fanout_mst_ok:
-                            # MST failed: discard fanout stub+B.Cu result and fall back
-                            # to standard multi-pin (also likely to fail, sending the
-                            # net to the grid for a second chance).
-                            _mp_all_paths.clear()
-                            _mp_all_vias.clear()
-                            _mp_fanout_done = False
-
-                    if not _mp_fanout_done:
-                        # No fanout-escape (or fanout failed): standard multi-pin
-                        # for all pads.  Disable via search for the clean-board fast
-                        # path (via-site search expensive on large free spaces).
-                        # Failed sub-edges are skipped (partial tree); nets that
-                        # need vias will be handled by the grid fallback.
-                        result_mp = route_net_multipin(
-                            pads_of_net=_mp_pads_world,
-                            net_name=_mp_net_name,
-                            all_pads=pads,
-                            geo=geo,
-                            board_bbox=board_bbox,
-                            extra_obstacles=_mp_extra_obstacles,
-                            window_mm=_gf_base_window,
-                            board_outline=neg_board_outline,
-                            drill_obstacles=neg_drill_obstacles,
-                            drill_centers=_drill_centers_gf,
-                            max_window_mm=_gf_max_window,
-                            allow_via=False,
-                        )
-                        if result_mp.world_paths:
-                            _mp_all_paths.extend(result_mp.world_paths)
-                            _mp_all_vias.extend(result_mp.world_vias or [])
-
+                    # Route all pads via standard multi-pin (attempt-3 approach).
+                    # Disable via search for the clean-board fast path: via-site
+                    # grid-sampling is expensive on large free spaces.
+                    # Failed sub-edges are skipped (partial tree) — nets that need
+                    # vias will be handled by the grid fallback.
+                    result_mp = route_net_multipin(
+                        pads_of_net=_mp_pads_world,
+                        net_name=_mp_net_name,
+                        all_pads=pads,
+                        geo=geo,
+                        board_bbox=board_bbox,
+                        extra_obstacles=_gf_extra_obstacles,
+                        window_mm=_gf_base_window,
+                        board_outline=neg_board_outline,
+                        drill_obstacles=neg_drill_obstacles,
+                        drill_centers=_drill_centers_gf,
+                        max_window_mm=_gf_max_window,
+                        allow_via=False,
+                    )
                     _mp_elapsed = round(_mp_time.perf_counter() - _mp_t0, 3)
 
-                    if _mp_all_paths:
-                        # Mark as pre-routed only when copper was actually committed.
-                        # Nets with no successful paths are left OUT of
-                        # _gridless_pre_routed so the grid router handles them with
-                        # their original priority and without being wrongly flagged as
-                        # "already attempted by gridless" (which would change their
-                        # grid-queue position and introduce non-determinism).
-                        _gridless_pre_routed.add(_mp_net_name)
+                    _gridless_pre_routed.add(_mp_net_name)
+
+                    if result_mp.world_paths:
                         from tracewise.route.gridless.adapter import to_gridless_netroute
                         nr = to_gridless_netroute(
-                            _mp_net, _mp_all_paths, grid,
-                            world_vias=_mp_all_vias,
+                            _mp_net, result_mp.world_paths, grid,
+                            world_vias=result_mp.world_vias,
                         )
                         # Mark multi-pin gridless-first copper into the shared grid
                         # ledger so the grid router routes AROUND it, preventing
@@ -1748,71 +1514,31 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
                         results[_mp_net_name] = nr
 
                         # Accumulate this net's copper as Shapely obstacles for
-                        # subsequent multi-pin nets in this pass.
-                        # _gf_extra_obstacles: B.Cu sub-segments only — used as
-                        #   bcu_extra_obstacles for subsequent B.Cu run routing.
-                        #   F.Cu copper is intentionally excluded: combining F.Cu
-                        #   and B.Cu into a single 2D projection (layer-unaware)
-                        #   blocks B.Cu routing in areas where only F.Cu copper
-                        #   physically exists, causing adjacent GPIO fanout to fail.
-                        # _gf_fcu_obstacles: F.Cu sub-segments only — used for
-                        #   fanout F.Cu stub routing (layer-unaware 2D free-space).
+                        # subsequent multi-pin nets in this pass (attempt-3 approach:
+                        # all copper as 2D projection, same as _gf_extra_obstacles seed).
                         try:
                             from shapely.geometry import LineString as _LStr2
                             from shapely.geometry import Point as _Pt2
 
                             from tracewise.route.gridless.geom import snap as _snap_mp
-                            for _wp2 in _mp_all_paths:
-                                if len(_wp2) < 2:
-                                    continue
-                                # Extract layer-separated sub-segments.
-                                _fcu2: list[tuple[float, float]] = []
-                                _bcu2: list[tuple[float, float]] = []
-                                for _pt2 in _wp2:
-                                    _l2 = _pt2[2] if len(_pt2) == 3 else 0
-                                    if _l2 == 0:
-                                        _fcu2.append((_pt2[0], _pt2[1]))
-                                    else:
-                                        # Flush F.Cu segment
-                                        if len(_fcu2) >= 2:
-                                            try:
-                                                _ls2f = _snap_mp(
-                                                    _LStr2(_fcu2).buffer(
-                                                        _inflate_gf, cap_style=2
-                                                    )
-                                                )
-                                                _gf_fcu_obstacles.append(_ls2f)
-                                            except Exception:  # noqa: BLE001
-                                                pass
-                                            _fcu2 = []
-                                        _bcu2.append((_pt2[0], _pt2[1]))
-                                # Flush final F.Cu segment
-                                if len(_fcu2) >= 2:
+                            for _wp2 in result_mp.world_paths:
+                                if len(_wp2) >= 2:
+                                    _pts2 = [(_w[0], _w[1]) for _w in _wp2]
                                     try:
-                                        _ls2f = _snap_mp(
-                                            _LStr2(_fcu2).buffer(_inflate_gf, cap_style=2)
+                                        _ls2 = _snap_mp(
+                                            _LStr2(_pts2).buffer(_inflate_gf, cap_style=2)
                                         )
-                                        _gf_fcu_obstacles.append(_ls2f)
-                                    except Exception:  # noqa: BLE001
-                                        pass
-                                # B.Cu segment → _gf_extra_obstacles
-                                if len(_bcu2) >= 2:
-                                    try:
-                                        _ls2b = _snap_mp(
-                                            _LStr2(_bcu2).buffer(_inflate_gf, cap_style=2)
-                                        )
-                                        _gf_extra_obstacles.append(_ls2b)
+                                        _gf_extra_obstacles.append(_ls2)
                                     except Exception:  # noqa: BLE001
                                         pass
                             # via_mm/2 + clearance_mm + track_mm/2 (FIX: was via_mm/2+clr)
                             _via_inf2 = _via_mm_gf / 2.0 + _clr_mm_gf + _track_mm_gf / 2.0
-                            for _vx2, _vy2 in _mp_all_vias:
+                            for _vx2, _vy2 in result_mp.world_vias:
                                 try:
                                     _vc2 = _snap_mp(
                                         _Pt2(_vx2, _vy2).buffer(_via_inf2, resolution=16)
                                     )
                                     _gf_extra_obstacles.append(_vc2)
-                                    _gf_fcu_obstacles.append(_vc2)  # via: both layers
                                 except Exception:  # noqa: BLE001
                                     pass
                         except Exception:  # noqa: BLE001

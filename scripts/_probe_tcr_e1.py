@@ -305,8 +305,12 @@ def audit_crossings(board_path: Path) -> dict[str, int]:
 
 # ── Single E1 run ─────────────────────────────────────────────────────────────
 
-def run_e1(out_dir: Path, topo_classes: dict[str, dict]) -> dict:
-    """Execute one E1 routing run. Returns a score dict."""
+def run_e1(out_dir: Path, topo_classes: dict[str, dict], mode: str = "escape") -> dict:
+    """Execute one E1 routing run. Returns a score dict.
+
+    mode="escape": pre-route QFN escape nets with route_net_steered, then grid+gridless_first
+    mode="gf_only": skip escape pre-routing; pass all 17 hard nets to gridless_first directly
+    """
     from tracewise.route.bridge import run_drc, strip_routing
     from tracewise.route.engine.kicad import (
         emit_routes, extract_pads as kicad_extract_pads,
@@ -377,16 +381,22 @@ def run_e1(out_dir: Path, topo_classes: dict[str, dict]) -> dict:
     )
     print(f"  Escape nets to steer: {len(escape_order)}", flush=True)
 
-    # Accumulated B.Cu obstacles from successfully routed escape nets.
-    # Passed to bcu_extra_obstacles to prevent B.Cu run overlaps.
-    # NOT passed to via placement or F.Cu stub (witness vias are tightly packed).
+    # Accumulated obstacles from successfully routed escape nets.
+    # bcu_extra_obs: B.Cu run segments — prevent B.Cu run overlaps.
+    # escape_via_drill_obs: Escape via copper rings as pre-inflated "drill"
+    #   obstacles for subsequent F.Cu stub routing.  Inflation:
+    #   via_mm/2 + clearance_mm + track_mm/2 (keeps track centreline at
+    #   ≥clearance from the via ring edge).  These prevent the /SWCLK F.Cu
+    #   stub from overlapping the /RUN via ring (shorting_items DRC violation).
     try:
         from shapely.geometry import LineString as _LS
+        from shapely.geometry import Point as _ViaObs
         from tracewise.route.gridless.geom import snap as _snap
         _have_shapely = True
     except ImportError:
         _have_shapely = False
     bcu_extra_obs: list = []
+    escape_via_drill_obs: list = []  # escape via rings as F.Cu stub obstacles
 
     precomp_routes: dict = {}
     steering_honored = 0
@@ -395,7 +405,11 @@ def run_e1(out_dir: Path, topo_classes: dict[str, dict]) -> dict:
 
     t_escape_start = time.perf_counter()
 
-    for net_name, tc in escape_order:
+    if mode == "gf_only":
+        # Skip escape pre-routing entirely.  All QFN escape nets (and the
+        # attempt-3 hard nets) are handled by gridless_first below.
+        pass
+    for net_name, tc in escape_order if mode != "gf_only" else []:
         _check_rss(f"escape {net_name}")
 
         net_obj = nets_by_name.get(net_name)
@@ -531,9 +545,88 @@ def run_e1(out_dir: Path, topo_classes: dict[str, dict]) -> dict:
         flush=True,
     )
 
-    # ── Grid-route the remaining nets ─────────────────────────────────────────
+    # ── Grid-route the remaining nets (with gridless_first for attempt-3 DRC reduction)
+    # Route the non-escape nets via attempt-3's gridless_first mechanism so the
+    # DRC-reducing treatment (solder_mask_bridge, hole_clearance negotiate path)
+    # applies to those nets too — not just plain grid routing.
+    # The 17 "hard" nets from attempt-3 that were NOT escape-routed above are
+    # passed as gridless_first so they get the negotiate/DRC-reducing path.
+    # Hard net set from attempt-3 (these benefit from gridless_first treatment).
+    ATTEMPT3_GRIDLESS_NETS = {
+        "/GPIO3", "/GPIO4", "/GPIO6", "/GPIO9", "/GPIO14",
+        "/GPIO18", "/GPIO20", "/GPIO23", "/GPIO27", "/GPIO28",
+        "/RUN", "/SWCLK", "/USB_D+", "/XIN",
+        "/QSPI_SCLK", "/QSPI_SD2", "Net-(U3-USB-DP)",
+    }
+    # Additional nets for escape mode only: USB_D- routes poorly under the
+    # grid engine when escape copper blocks its natural B.Cu corridor.
+    # Adding it to gridless_first in escape mode lets it use Shapely-based
+    # routing with escape copper as explicit obstacles, matching gf_only quality.
+    ESCAPE_EXTRA_GRIDLESS = {"/USB_D-"}
+
+    if mode == "gf_only":
+        # Pure gridless_first mode: pass ALL 17 hard nets to gridless_first.
+        # No escape pre-routing → no B.Cu barriers → mirrors attempt-3 baseline.
+        # extra_gridless_obstacles is empty (clean board).
+        gf_nets_clean = ATTEMPT3_GRIDLESS_NETS
+        _gls_extra_obs: list = []
+    else:
+        # escape mode: pre-routed nets excluded from gridless_first; escape copper
+        # seeded into extra_gridless_obstacles so gridless routes avoid it.
+        # Also add ESCAPE_EXTRA_GRIDLESS nets (e.g. /USB_D-) that route poorly
+        # under the grid engine in escape mode due to blocked B.Cu corridors.
+        gf_nets = (ATTEMPT3_GRIDLESS_NETS | ESCAPE_EXTRA_GRIDLESS) - set(precomp_routes.keys())
+        _qfn_escape_set = set(topo_classes.keys())  # nets in the escape plan
+        gf_nets_clean = {n for n in gf_nets if n not in _qfn_escape_set}
+
+        # Seed extra_gridless_obstacles with escape copper from precomp_routes.
+        try:
+            from shapely.geometry import LineString as _GLSLS
+            from shapely.geometry import Point as _GLSPt
+            from tracewise.route.gridless.geom import snap as _gls_snap
+            _gls_inflate = geo["track_mm"] + geo["clearance_mm"]
+            _via_inflate = geo["via_mm"] / 2.0 + geo["clearance_mm"] + geo["track_mm"] / 2.0
+            _gls_extra_obs = []
+            for _nr in precomp_routes.values():
+                if not hasattr(_nr, "world_paths"):
+                    continue
+                for _wp in _nr.world_paths:
+                    if len(_wp) >= 2:
+                        _pts2d = [(_w[0], _w[1]) for _w in _wp]
+                        try:
+                            _gls_extra_obs.append(
+                                _gls_snap(_GLSLS(_pts2d).buffer(_gls_inflate, cap_style=2))
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                if hasattr(_nr, "world_vias"):
+                    for _vx2, _vy2 in (_nr.world_vias or []):
+                        try:
+                            _gls_extra_obs.append(
+                                _gls_snap(_GLSPt(_vx2, _vy2).buffer(_via_inflate, resolution=16))
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+        except Exception:  # noqa: BLE001
+            _gls_extra_obs = []
+
     remaining = [n for n in nets if n.name not in precomp_routes]
     _check_rss("before_grid")
+
+    gridless_kwargs = {
+        "pads": pads,
+        "geo": geo,
+        "board_bbox": board_bbox,
+        "anchors": anchors,
+        "extra_gridless_obstacles": _gls_extra_obs,
+        "board_outline": board_outline,
+        "drill_obstacles": drill_obstacles,
+        "drill_centers": drill_centers,
+        # Cap windows to prevent O(n²) blowup (mirrors kicad.py gridless_first caps)
+        "negotiate_max_classify_window_mm": 25.0,
+        "negotiate_max_route_window_mm": 25.0,
+        "negotiate_ripup_factor": 2,
+    }
 
     t_grid_start = time.perf_counter()
     grid_results = route_all(
@@ -544,9 +637,15 @@ def run_e1(out_dir: Path, topo_classes: dict[str, dict]) -> dict:
         via_cost=10.0,
         history_factor=1.0,
         allow_partial=True,
+        gridless_first=gf_nets_clean if gf_nets_clean else None,
+        gridless_kwargs=gridless_kwargs if gf_nets_clean else None,
     )
     t_grid = time.perf_counter() - t_grid_start
-    print(f"  Grid routing: {t_grid:.1f}s", flush=True)
+    print(
+        f"  Grid routing (gridless_first={len(gf_nets_clean)} non-escape nets): "
+        f"{t_grid:.1f}s",
+        flush=True,
+    )
 
     _check_rss("after_grid")
 
@@ -613,6 +712,8 @@ def main() -> None:
                         help="Number of routing runs (3 for determinism check)")
     parser.add_argument("--out", default="/tmp/tcr_e1_out",
                         help="Output directory")
+    parser.add_argument("--mode", default="escape", choices=["escape", "gf_only"],
+                        help="escape=pre-route QFN nets then grid; gf_only=gridless_first only")
     args = parser.parse_args()
 
     t_total_start = time.perf_counter()
@@ -660,7 +761,7 @@ def main() -> None:
 
         try:
             _check_rss(f"start run {run_idx}")
-            score = run_e1(run_dir, topo_classes)
+            score = run_e1(run_dir, topo_classes, mode=args.mode)
             run_results.append(score)
             peak_rss = max(peak_rss, score["rss_gb"])
 

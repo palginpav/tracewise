@@ -1519,11 +1519,27 @@ def route_net_steered(
     bcu_wx2 = min(max(vx, dx) + _bcu_margin_max, bx2)
     bcu_wy2 = min(max(vy, dy) + _bcu_margin_max, by2)
 
-    # Note: lane_y_mm is the via-escape y-coordinate (the horizontal bus lane).
-    # We do NOT shrink the B.Cu window by lane_y here because the net still needs
-    # a vertical segment from lane_y to dest_xy (the connector pad), which is
-    # outside the lane band.  The lane constraint is enforced at the via level:
-    # escape_via_xy is already at the lane_y position (the class assignment).
+    # Lane enforcement: when lane_y_mm is given, the B.Cu run routes in the
+    # assigned horizontal lane (y ≈ lane_y_mm), then exits vertically to dest.
+    # Preferred path (Option L — lane-route):
+    #   (vx, vy) → (vx, lane_y_mm)    [short vertical stub from via to lane]
+    #   (vx, lane_y_mm) → (dx, lane_y_mm)  [horizontal run along the lane]
+    #   (dx, lane_y_mm) → (dx, dy)    [vertical exit to dest pad]
+    # This is crossing-free by construction: nets in different lanes have
+    # different lane_y values, so their horizontal segments cannot intersect.
+    # The B.Cu window must include the via y, lane y, AND the dest y.
+    # We do NOT clamp the window y to just the lane band because the vertical
+    # exit from lane_y_mm to dy (dest pad) must also be inside the window.
+    _lane_band_mm: float = max(3.0, 6.0 * (track_mm + clearance_mm))
+    if lane_y_mm is not None:
+        # Ensure the window covers: via y (vy), lane y, and dest y (dy) with margin.
+        # This overrides the default window y-bounds only when tighter.
+        _all_y = [vy, lane_y_mm, dy]
+        _lane_wy1 = max(min(_all_y) - _bcu_margin_max, by1)
+        _lane_wy2 = min(max(_all_y) + _bcu_margin_max, by2)
+        bcu_wy1 = _lane_wy1
+        bcu_wy2 = _lane_wy2
+
     bcu_window_max = (bcu_wx1, bcu_wy1, bcu_wx2, bcu_wy2)
     fs_B_run, obs_B_run = build_windowed_free_space(
         pads, net_name, clearance_mm, track_mm,
@@ -1545,17 +1561,47 @@ def route_net_steered(
     if _seg_in_free((vx, vy), (dx, dy)):
         bcu_path = [(vx, vy), (dx, dy)]
 
-    # Option A: vertical-first
-    if bcu_path is None:
+    # Option L (lane-route, preferred when lane_y_mm given):
+    # via → (vx, lane_y_mm) → (dx, lane_y_mm) → dest.
+    # Keeps the long horizontal run strictly at lane_y_mm so nets in different
+    # lanes can never cross each other (river-routing, crossing-free by construction).
+    if bcu_path is None and lane_y_mm is not None:
+        lp1 = (vx, lane_y_mm)   # via → lane entry
+        lp2 = (dx, lane_y_mm)   # lane exit → dest column
+        # Only the horizontal segment needs to be strictly in the lane.
+        # The stub (vx,vy)→lp1 and exit lp2→dest are short verticals.
+        if (
+            _seg_in_free((vx, vy), lp1)
+            and _seg_in_free(lp1, lp2)
+            and _seg_in_free(lp2, (dx, dy))
+        ):
+            # Deduplicate collinear waypoints (e.g. vy == lane_y_mm → skip stub)
+            waypts: list[tuple[float, float]] = [(vx, vy)]
+            if abs(vy - lane_y_mm) > 1e-6:
+                waypts.append(lp1)
+            if abs(vx - dx) > 1e-6:
+                waypts.append(lp2)
+            waypts.append((dx, dy))
+            bcu_path = waypts
+
+    # Option A: vertical-first (original first option when no lane constraint)
+    if bcu_path is None and lane_y_mm is None:
         corner_a = (vx, dy)
         if _seg_in_free((vx, vy), corner_a) and _seg_in_free(corner_a, (dx, dy)):
             bcu_path = [(vx, vy), corner_a, (dx, dy)]
 
-    # Option B: horizontal-first
+    # Option B: horizontal-first (original second option when no lane constraint).
+    # When lane_y_mm is given and Option L failed, try horizontal at vy before A*.
     if bcu_path is None:
         corner_b = (dx, vy)
         if _seg_in_free((vx, vy), corner_b) and _seg_in_free(corner_b, (dx, dy)):
             bcu_path = [(vx, vy), corner_b, (dx, dy)]
+
+    # Option A fallback (when lane_y_mm given and both L + B failed):
+    if bcu_path is None and lane_y_mm is not None:
+        corner_a = (vx, dy)
+        if _seg_in_free((vx, vy), corner_a) and _seg_in_free(corner_a, (dx, dy)):
+            bcu_path = [(vx, vy), corner_a, (dx, dy)]
 
     # Fallback: visibility-graph A*
     if bcu_path is None:

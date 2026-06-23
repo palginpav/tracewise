@@ -474,3 +474,36 @@ mitayi's gap is homotopy/ordering not capacity, and that crossing-free topology 
 41/73) REMAINS THE DEFINITIVE BEST.** Closing the last gap to the human's 0/0 needs either the
 lane-enforcement + gridless_first-integration follow-through (scoped but uncertain) or genuine placement
 co-design — both fresh chapters.
+
+---
+
+## E1 follow-through (2026-06-23) — FIRST sub-41 connectivity (40), not yet a clean win
+
+Implemented the two E1-gap fixes: **lane_y_mm enforcement** in `route_net_steered` (constrain the B.Cu
+run to a ±pitch band around the assigned lane → monotone-ordered nets route in disjoint lanes,
+crossing-free by construction — the river-routing result) + **gridless_first integration** (route the
+steered escape nets first → mark their copper → route the rest via the attempt-3 negotiate mechanism;
+also fixed a real bug: `gridless_first` multi-pin path wasn't seeding `extra_gridless_obstacles`).
+`route_net_steered`/escape-mode opt-in; default byte-identical; 416 tests; ruff clean.
+
+**PM-verified A/B (independent re-run, `/usr/bin/time`):**
+| | unconnected | errors | crossings | |
+|---|---|---|---|---|
+| attempt-3 (gf_only control) | 41 | 73 | 0 | baseline |
+| **TCR escape + gridless_first** | **40** | 79 | **0** | NEW connectivity best |
+
+**40 < 41 — the FIRST time anything beats attempt-3 on connectivity** (the primary goal, toward the
+human's 0). Crossing-free (lane enforcement worked); bounded (937MB); connectivity deterministic (40
+every run). 11/13 escape nets realized; lane enforcement fixed the GPIO9 crossing from E1.
+
+**NOT a clean win:** errors 79 vs 73 (+6), including **+2 shorting_items** — /RUN and /SWCLK get
+FALLBACK vias because their WITNESS via positions are illegal under `is_legal_via` (QFN pad proximity);
+the fallback places them too close → F.Cu stub overlap → 2 shorts. By the project's ~5-errors-per-
+unconnected heuristic, 40/79 ≈ 41/73 (essentially tied), tilted toward connectivity.
+
+**The path to a clean sub-41 win is now pinpointed AND independently corroborated:** the researcher's
+`HUMAN-ROUTING-TECHNIQUES.md` ranks **#1 = global ring-slot assignment** (non-radial, balanced N/S/E/W
+quadrant fanout) — which would give /RUN,/SWCLK LEGAL ring-slot vias instead of the too-close radial
+fallback, clearing the 2 shorts and likely the +6 errors. That is the next build: replace the witness-via
++ radial-fallback with a proper global ring-slot assignment pre-pass (TCR Steps A-C), then re-measure.
+attempt-3 (41/73) remains the committed best-overall; this 40/79 is the first connectivity breakthrough.
