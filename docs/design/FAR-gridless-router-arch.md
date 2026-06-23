@@ -2022,3 +2022,41 @@ Target: keep the 10/17 connections with ≤41 unconnected.
 **NOTE: attempt-3 (commit 9ae76ea) remains the BEST SCORECARD RESULT to date (41/73).** This fanout build
 advances the mechanism (10/17) and is the foundation for displacement control; it is committed behind the
 opt-in `gridless_first` flag (default OFF = byte-identical), so default behavior is unaffected.
+
+---
+
+## Displacement control via grid-first fanout-rescue (2026-06-23) — NO-GO: the substrates fundamentally contend
+
+Wired fanout-escape into the grid-FIRST `gridless_rescue` path (grid routes first → fanout-rescue the
+still-unconnected QFN nets, hoping grid keeps its channels with zero displacement). PM-verified A/B:
+
+| | grid-only | attempt-3 (BEST) | gridless-first fanout | **grid-first rescue (this)** |
+|---|---|---|---|---|
+| unconnected | 48 | **41** | 45 | **46** |
+| errors | 88 | 73 | 83 | 109 |
+| QFN nets connected | 0 | 4 | 10 | **1** |
+
+**NO-GO: only 1/17 rescued (just /GPIO27), 46 unconnected, 109 errors, ~22min.** Grid-first AVOIDS
+displacement but the grid copper now BLOCKS the fanout B.Cu escapes (the M3-P1 rescue no-op problem
+persists even WITH fanout) — so almost nothing rescues. Worse than every prior result.
+
+**The fundamental finding — the two substrates CONTEND for the same channels, and neither ORDERING
+resolves it:**
+- gridless-FIRST: fanout connects 10/17 but DISPLACES 7 grid nets (→ 45).
+- grid-FIRST: grid keeps its channels but BLOCKS the fanout escapes → only 1/17 (→ 46).
+Neither wins. Closing this gap cleanly would need TRUE cross-substrate CO-OPTIMIZATION — route grid and
+gridless TOGETHER under a SHARED congestion/negotiation field (not sequential), so they jointly avoid
+each other's channels. That is a major architectural change (a unified negotiated router over both
+substrates), not a sequential-ordering tweak — a separate, large chapter.
+
+**Conclusion: attempt-3 (commit 9ae76ea, 41/73, gridless-first negotiate) is the DEFINITIVE best
+scorecard result, and the practical ceiling of the current two-phase (grid + gridless) architecture on
+mitayi.** The fanout-escape mechanism is validated and scales (10/17 connections), but cannot be
+deployed net-positively without cross-substrate co-optimization.
+
+**Salvaged from this build (valuable regardless):** memory-OOM fixes — `skip_full_corner_fallback`
+(the full-corner visibility fallback extracted 6000+ vertices → O(n²) numpy edge arrays → 4–5GB RSS;
+now skippable when extra_obstacles is large) + capped B.Cu run window (prevented an 18GB unary_union
+OOM) + reflex-only B.Cu pruning. These prevent pathological memory blowups in the fanout paths and are
+kept. The fanout-rescue wiring is committed behind the opt-in `gridless_rescue` flag (default OFF =
+byte-identical).

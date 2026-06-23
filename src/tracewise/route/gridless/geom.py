@@ -520,6 +520,7 @@ def net_routes_to_track_obstacles(
     grid: object,
     track_mm: float,
     clearance_mm: float,
+    layer: int | None = None,
 ) -> list:
     """Convert routed grid NetRoute paths to buffered Shapely obstacle polygons.
 
@@ -546,6 +547,14 @@ def net_routes_to_track_obstacles(
         Track width in mm.
     clearance_mm:
         Required copper-to-copper clearance in mm.
+    layer:
+        Optional layer filter.  ``None`` (default) → include copper from all
+        layers (existing behaviour).  ``0`` → F.Cu only.  ``1`` → B.Cu only.
+        Grid paths are split at layer transitions by ``simplify`` — this
+        parameter selects which sub-runs to include.  For ``GridlessNetRoute``
+        entries (3-tuple world paths), waypoints whose third element matches
+        *layer* are included; 2-tuple paths (single-layer) are included only
+        when ``layer`` is ``None`` or ``0`` (F.Cu default).
 
     Returns
     -------
@@ -582,16 +591,51 @@ def net_routes_to_track_obstacles(
             if isinstance(nr, GridlessNetRoute):
                 if nr.world_paths:
                     for wpath in nr.world_paths:
-                        if len(wpath) >= 2:
-                            ls = snap(LineString(wpath).buffer(inflate, cap_style=2))
-                            obstacles.append(ls)
+                        if len(wpath) < 2:
+                            continue
+                        if layer is None:
+                            # All-layer: include as-is (strip layer coord)
+                            pts_2d: list = [
+                                (pt[0], pt[1]) for pt in wpath
+                            ]
+                            if len(pts_2d) >= 2:
+                                ls = snap(
+                                    LineString(pts_2d).buffer(inflate, cap_style=2)
+                                )
+                                obstacles.append(ls)
+                        else:
+                            # Layer-filtered: split into per-layer sub-segments
+                            seg: list[tuple[float, float]] = []
+                            for pt in wpath:
+                                pt_layer = pt[2] if len(pt) == 3 else 0
+                                if pt_layer == layer:
+                                    seg.append((pt[0], pt[1]))
+                                else:
+                                    if len(seg) >= 2:
+                                        ls = snap(
+                                            LineString(seg).buffer(
+                                                inflate, cap_style=2
+                                            )
+                                        )
+                                        obstacles.append(ls)
+                                    seg = []
+                            if len(seg) >= 2:
+                                ls = snap(
+                                    LineString(seg).buffer(inflate, cap_style=2)
+                                )
+                                obstacles.append(ls)
                 continue
 
             # Grid NetRoute: paths are lists of (layer, iy, ix) cell tuples.
+            # simplify() splits at layer transitions, so each run has one layer.
             for path in nr.paths:
                 runs = simplify(path)
                 for run in runs:
                     if len(run) < 2:
+                        continue
+                    # Layer filter: skip runs whose layer doesn't match.
+                    run_layer = run[0][0]
+                    if layer is not None and run_layer != layer:
                         continue
                     world_pts = [grid.to_world(c[1], c[2]) for c in run]
                     if len(world_pts) >= 2:
@@ -602,6 +646,89 @@ def net_routes_to_track_obstacles(
 
         return obstacles
     except Exception:  # noqa: BLE001 — Shapely absent or path conversion failed
+        return []
+
+
+def net_routes_to_via_obstacles(
+    results: dict,
+    grid: object,
+    via_mm: float,
+    clearance_mm: float,
+    track_mm: float,
+) -> list:
+    """Convert grid-router-placed vias to buffered Shapely obstacle circles.
+
+    Grid router vias (stored in ``nr.via_sites`` as ``(iy, ix)`` grid cells) are
+    placed at routing time and are NOT written to the KiCad file until emit.
+    They are therefore absent from ``extract_drill_obstacles``.  This function
+    builds per-via Shapely Polygon circles so that subsequent gridless rescue
+    runs can avoid crossing via annular rings.
+
+    The inflate radius is ``via_mm / 2 + track_mm / 2``:
+    keeps a rescue track centreline strictly outside the via copper edge so the
+    rescue track does NOT overlap via copper (preventing ``shorting_items`` DRC
+    violations).  This is intentionally less conservative than the full
+    ``via_mm/2 + clearance_mm + track_mm/2`` formula: tracks may pass within
+    ``clearance_mm`` of a via (``clearance`` DRC violations are expected and
+    permitted by the rescue gate) but must never OVERLAP via copper (``short``
+    violations fail the gate).  The narrower radius preserves B.Cu corridors
+    between closely-spaced routing vias that would otherwise be completely
+    closed off.
+
+    Parameters
+    ----------
+    results:
+        ``dict[str, NetRoute]`` from ``route_all``.  Only ``ok`` grid
+        ``NetRoute`` entries (not ``GridlessNetRoute``) are processed because
+        only they store routing-time vias in ``via_sites``.
+    grid:
+        Shared ``Grid`` — used to convert ``(iy, ix)`` back to world mm.
+    via_mm:
+        Via copper diameter in mm.
+    clearance_mm:
+        Required copper-to-copper clearance in mm.
+    track_mm:
+        Track width in mm (used to keep track centreline clear of via edge).
+
+    Returns
+    -------
+    List of inflated Shapely Polygons (one circle per unique via position).
+    Returns ``[]`` if Shapely is absent or no vias found.
+    """
+    if not HAVE_SHAPELY:
+        return []
+    try:
+        from shapely.geometry import Point as _Point
+
+        from tracewise.route.gridless.adapter import GridlessNetRoute
+
+        # Inflate = via copper radius + track half-width: the track centerline
+        # must stay strictly outside the via copper disc to prevent copper
+        # overlap (short). Does NOT enforce the full clearance margin — that
+        # would close narrow corridors between closely-spaced routing vias.
+        inflate = via_mm / 2.0 + track_mm / 2.0
+        obstacles: list = []
+
+        for _name, nr in results.items():
+            if not nr.ok:
+                continue
+            # GridlessNetRoute vias are world_vias (already in mm) — they are
+            # accumulated into _rescue_bcu_obstacles during the rescue block so
+            # we do NOT double-count them here.
+            if isinstance(nr, GridlessNetRoute):
+                continue
+            for iy, ix in nr.via_sites:
+                wx, wy = grid.to_world(iy, ix)  # type: ignore[union-attr]
+                try:
+                    circ = snap(
+                        _Point(wx, wy).buffer(inflate, resolution=16)
+                    )
+                    obstacles.append(circ)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        return obstacles
+    except Exception:  # noqa: BLE001
         return []
 
 

@@ -874,11 +874,23 @@ def route_window(
     goal_xy: tuple[float, float],
     margin_mm: float,
     obstacle_polys: list,
+    skip_full_corner_fallback: bool = False,
 ) -> tuple[list[tuple[float, float]] | None, int, int]:
     """Build the visibility graph and run A* for one window attempt.
 
     Tries reflex-only corner pruning first; falls back to full corner set
-    if reflex pruning produces no path.
+    if reflex pruning produces no path (unless *skip_full_corner_fallback*
+    is True).
+
+    Parameters
+    ----------
+    skip_full_corner_fallback:
+        When True, skip the expensive full-corner fallback.  The full-corner
+        fallback extracts ALL obstacle polygon vertices (up to 6000+ on
+        dense boards), building O(n²) numpy edge arrays → 4-5 GB RSS on the
+        mitayi board.  Set True when called from the gridless rescue path
+        (combined_drill_obs has ~1680 obstacles) so that a routing failure
+        returns ok=False quickly rather than OOM-ing.
 
     Returns
     -------
@@ -897,8 +909,11 @@ def route_window(
     )
     path = astar_visgraph(all_nodes, adj, goal_xy)
 
-    if path is None:
-        # Fallback: full corner set (no reflex pruning)
+    if path is None and not skip_full_corner_fallback:
+        # Fallback: full corner set (no reflex pruning).
+        # WARNING: can allocate 4-5 GB on boards with many obstacles (> ~300
+        # in the window) because the O(n²) edge set requires large numpy
+        # arrays.  Only use on small windows / few obstacles.
         all_nodes_fb, adj_fb, n_nodes_fb, n_edges_fb = build_visibility_graph(
             free_space,
             start_xy,

@@ -95,6 +95,7 @@ def route_net_gridless(
     drill_centers: list | None = None,
     allow_via: bool = True,
     max_window_mm: float | None = None,
+    skip_full_corner_fallback: bool = False,
 ) -> GridlessRouteResult:
     """Route a 2-pin net gridlessly via visibility-graph A*.
 
@@ -143,6 +144,13 @@ def route_net_gridless(
         ~20-25 mm for the gridless-first fast path on clean boards to prevent
         O(n²) visibility-graph blowup.  ``None`` (default) = board diagonal
         (original behaviour, unchanged).
+    skip_full_corner_fallback:
+        When True, skip the expensive full-corner fallback in ``route_window``.
+        The fallback extracts ALL obstacle polygon vertices (up to 6000+ on
+        dense boards) and builds O(n²) numpy edge arrays → 4-5 GB RSS.  Set
+        True when ``extra_obstacles`` is large (e.g. combined grid track
+        obstacles ~1680 on mitayi).  Default ``False`` preserves existing
+        behaviour for all other callers.
 
     Returns
     -------
@@ -203,6 +211,7 @@ def route_net_gridless(
             pad_b,
             current_window,
             obstacle_polys,
+            skip_full_corner_fallback=skip_full_corner_fallback,
         )
         solve_time = time.perf_counter() - t_solve
 
@@ -478,8 +487,10 @@ def route_net_fanout_escape(
     drill_centers: list | None = None,
     window_mm: float = 4.0,
     max_window_mm: float | None = None,
+    max_bcu_window_mm: float | None = None,
     dest_xy: tuple[float, float] | None = None,
     bcu_extra_obstacles: list | None = None,
+    fcu_stub_extra_obstacles: list | None = None,
 ) -> GridlessRouteResult:
     """Route a QFN pad out of its dense ring via a guided escape via.
 
@@ -543,7 +554,17 @@ def route_net_fanout_escape(
     window_mm:
         Base routing window half-margin (mm).
     max_window_mm:
-        Hard cap on window escalation.
+        Hard cap on window escalation (applies to via-placement and F.Cu stub
+        windows).  Does NOT cap the B.Cu run window — use ``max_bcu_window_mm``
+        for that.
+    max_bcu_window_mm:
+        Hard cap on the B.Cu run window margin.  When ``None``, falls back to
+        ``max_window_mm``.  Set this to a small value (e.g. 6–10 mm) to avoid
+        O(n²) Shapely ``unary_union`` on boards with many B.Cu track obstacles.
+        The B.Cu window is ``bcu_margin_max`` on each side of the via→dest
+        bounding box; with 814 B.Cu segments on the mitayi board a 40 mm cap
+        encompasses most of the board → 18 GB RSS.  8 mm keeps the window
+        tight while still allowing Manhattan direct/L-shaped paths.
 
     Returns
     -------
@@ -593,9 +614,15 @@ def route_net_fanout_escape(
         extra_obstacles, via_window,
         board_outline=board_outline, drill_obstacles=drill_obstacles, layer=0,
     )
+    # B.Cu via placement: use bcu_extra_obstacles when provided so that F.Cu
+    # track copper (in extra_obstacles) is NOT projected as a B.Cu obstacle,
+    # which would block the escape-via placement near the QFN ring.
+    _bcu_extra_via = (
+        bcu_extra_obstacles if bcu_extra_obstacles is not None else extra_obstacles
+    )
     fs_B_via, _obs_B_via = build_windowed_free_space(
         pads, net_name, clearance_mm, track_mm,
-        extra_obstacles, via_window,
+        _bcu_extra_via, via_window,
         board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
     )
 
@@ -629,7 +656,10 @@ def route_net_fanout_escape(
 
     # --- Step 3: Route F.Cu stub (source_xy → escape_via) ---
     stub_dist = _math.hypot(vx - source_xy[0], vy - source_xy[1])
-    fcu_margin = max(stub_dist + 2.0, 3.0)
+    # Use a generous window so the visibility-graph can find paths around
+    # dense F.Cu grid copper near the QFN pad ring.  The stub is short
+    # (typically 1–3 mm) so a 6 mm margin covers several pad-ring radii.
+    fcu_margin = max(stub_dist + 5.0, 6.0)
     if max_window_mm is not None:
         fcu_margin = min(fcu_margin, max_window_mm)
     fcu_wx1 = max(min(source_xy[0], vx) - fcu_margin, bx1)
@@ -638,9 +668,17 @@ def route_net_fanout_escape(
     fcu_wy2 = min(max(source_xy[1], vy) + fcu_margin, by2)
     fcu_window = (fcu_wx1, fcu_wy1, fcu_wx2, fcu_wy2)
 
+    # F.Cu stub free space: use fcu_stub_extra_obstacles when provided.
+    # fcu_stub_extra_obstacles contains F.Cu track copper so the stub avoids
+    # grid tracks (preventing shorts) without blocking the via placement step
+    # which uses extra_obstacles (drills only) for F.Cu free space.
+    _fcu_stub_obs = (
+        fcu_stub_extra_obstacles if fcu_stub_extra_obstacles is not None
+        else extra_obstacles
+    )
     fs_F_stub, obs_F_stub = build_windowed_free_space(
         pads, net_name, clearance_mm, track_mm,
-        extra_obstacles, fcu_window,
+        _fcu_stub_obs, fcu_window,
         board_outline=board_outline, drill_obstacles=drill_obstacles, layer=0,
     )
 
@@ -697,13 +735,18 @@ def route_net_fanout_escape(
     # for adjacent non-target nets has unobstructed corridors.
     bcu_dist = _math.hypot(dest_xy[0] - vx, dest_xy[1] - vy)
     bcu_margin = max(bcu_dist * 0.35, 5.0)
-    if max_window_mm is not None:
-        bcu_margin = min(bcu_margin, max_window_mm)
+    # B.Cu run window cap: use max_bcu_window_mm when provided, else max_window_mm.
+    # This is separate from max_window_mm (which governs via-placement and F.Cu
+    # stub) because the B.Cu window can be large (via→dest span + margin) and
+    # capture hundreds of B.Cu track obstacles → O(n²) unary_union → OOM.
+    _bcu_cap = max_bcu_window_mm if max_bcu_window_mm is not None else max_window_mm
+    if _bcu_cap is not None:
+        bcu_margin = min(bcu_margin, _bcu_cap)
 
     # Build the B.Cu free-space once with the largest window
     _bcu_obs = bcu_extra_obstacles if bcu_extra_obstacles is not None else extra_obstacles
-    _bcu_margin_max = (min(bcu_margin * 2.0, max_window_mm)
-                       if max_window_mm is not None else bcu_margin * 2.0)
+    _bcu_margin_max = (min(bcu_margin * 2.0, _bcu_cap)
+                       if _bcu_cap is not None else bcu_margin * 2.0)
     bcu_wx1 = max(min(vx, dest_xy[0]) - _bcu_margin_max, bx1)
     bcu_wy1 = max(min(vy, dest_xy[1]) - _bcu_margin_max, by1)
     bcu_wx2 = min(max(vx, dest_xy[0]) + _bcu_margin_max, bx2)
@@ -747,8 +790,8 @@ def route_net_fanout_escape(
     if bcu_path is None:
         # Fall back to visibility-graph A* if Manhattan paths are blocked
         for _attempt, cur_bcu_margin in enumerate([bcu_margin, bcu_margin * 2.0]):
-            if max_window_mm is not None:
-                cur_bcu_margin = min(cur_bcu_margin, max_window_mm)
+            if _bcu_cap is not None:
+                cur_bcu_margin = min(cur_bcu_margin, _bcu_cap)
             bcu_wx1_fb = max(min(vx, dx) - cur_bcu_margin, bx1)
             bcu_wy1_fb = max(min(vy, dy) - cur_bcu_margin, by1)
             bcu_wx2_fb = min(max(vx, dx) + cur_bcu_margin, bx2)
@@ -761,20 +804,23 @@ def route_net_fanout_escape(
                 board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
             )
 
-            for use_reflex in [True, False]:
-                nodes_b, adj_b, _nn2, _ne2 = build_visibility_graph(
-                    free_space=fs_B_fb,
-                    start_xy=escape_via,
-                    goal_xy=dest_xy,
-                    margin_mm=cur_bcu_margin,
-                    obstacle_polys=obs_B_fb,
-                    use_reflex_pruning=use_reflex,
-                )
-                path_b = astar_visgraph(nodes_b, adj_b, goal_xy=dest_xy)
-                if path_b is not None:
-                    bcu_path = path_b
-                    break
-            if bcu_path is not None:
+            # Only try reflex pruning: the full-corner fallback (use_reflex=False)
+            # extracts ALL obstacle polygon vertices (up to 6000+ on mitayi) and
+            # builds O(n²) numpy edge arrays → 4-5 GB RSS.  If reflex-only fails,
+            # accept that the B.Cu run failed for this window attempt; the outer
+            # bcu_path=None check will return ok=False for this TH destination so
+            # the caller tries the next nearest TH pad.
+            nodes_b, adj_b, _nn2, _ne2 = build_visibility_graph(
+                free_space=fs_B_fb,
+                start_xy=escape_via,
+                goal_xy=dest_xy,
+                margin_mm=cur_bcu_margin,
+                obstacle_polys=obs_B_fb,
+                use_reflex_pruning=True,
+            )
+            path_b = astar_visgraph(nodes_b, adj_b, goal_xy=dest_xy)
+            if path_b is not None:
+                bcu_path = path_b
                 break
 
     if bcu_path is None or len(bcu_path) < 2:
@@ -974,6 +1020,7 @@ def route_net_multipin(
     drill_centers: list | None = None,
     max_window_mm: float | None = None,
     allow_via: bool = True,
+    skip_full_corner_fallback: bool = False,
 ) -> GridlessRouteResult:
     """Route a multi-pin net as a Minimum Spanning Tree (M3-P2).
 
@@ -1019,6 +1066,10 @@ def route_net_multipin(
         path on clean boards: via-site search is expensive on large free spaces;
         single-layer-only mirrors the Probe-Order fast path that routes 17 nets
         in ~39 s.  Failed sub-edges are skipped cleanly (partial tree).
+    skip_full_corner_fallback:
+        Forwarded to each ``route_net_gridless`` sub-edge call.  When True,
+        skips the expensive full-corner fallback in ``route_window`` that can
+        consume 4-5 GB RAM when ``extra_obstacles`` is large.  Default False.
 
     Returns
     -------
@@ -1050,6 +1101,7 @@ def route_net_multipin(
             drill_centers=drill_centers,
             allow_via=allow_via,
             max_window_mm=max_window_mm,
+            skip_full_corner_fallback=skip_full_corner_fallback,
         )
 
     if extra_obstacles is None:
@@ -1162,6 +1214,7 @@ def route_net_multipin(
             drill_centers=drill_centers,
             allow_via=allow_via,
             max_window_mm=max_window_mm,
+            skip_full_corner_fallback=skip_full_corner_fallback,
         )
 
         # Accumulate stats
