@@ -43,6 +43,7 @@ extend-exclude = [
     "scripts/_verify_*.py",
     "scripts/spike*.py",
     "scripts/*_measure.py",
+    "scripts/_invent*.py",
     ".claude",
 ]
 
