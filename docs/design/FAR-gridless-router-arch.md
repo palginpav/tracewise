@@ -2060,3 +2060,17 @@ now skippable when extra_obstacles is large) + capped B.Cu run window (prevented
 OOM) + reflex-only B.Cu pruning. These prevent pathological memory blowups in the fanout paths and are
 kept. The fanout-rescue wiring is committed behind the opt-in `gridless_rescue` flag (default OFF =
 byte-identical).
+
+---
+
+## → SUCCESSOR CHAPTER: Cross-Substrate Co-Optimization
+
+The "separate, large chapter" this arc concluded is needed → **`docs/design/CROSS-SUBSTRATE-COOPT.md`**
+(2026-06-23). It designs the unified negotiated router over BOTH substrates under ONE shared
+congestion field (the 0.5 mm super-cell lattice as the common currency; the 0.1 mm `grid.cells`
+ledger stays the hard occupancy plane), a single McMurchie-Ebeling loop generalized across grid +
+gridless (reusing `pathfinder.route_all_pathfinder` + `negotiate.route_gridless_set`), cross-substrate
+contention detection, the bounded-runtime/memory strategy (the salvaged OOM guards above made
+mandatory), the staging (M-CO-1/2/3), and **Spike-CoOpt** — the small bounded experiment that tests
+whether a shared field lets a QFN-fanout net and a displaced grid net (/GPIO1,2) BOTH connect where
+sequential forced one out. Go/no-go for beating the 41 ceiling.
