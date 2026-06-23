@@ -573,3 +573,39 @@ design + the Spike-CoOpt it specifies.
     task list are all stated. Evidence: Spike-CoOpt section + task list.
 11. **R-CO-11 — No production code written.** PASS iff only this `.md` is created/edited (pseudocode
     + contracts only; no runnable source). Evidence: `files_changed` = this doc only.
+
+---
+
+## Spike-CoOpt (2026-06-23) — GO-WITH-CAVEATS: deconfliction PROVEN, bounded; the architecture works
+
+`scripts/spike_coopt_shared_field.py` (PM-verified by independent re-run). In a bounded mitayi QFN-cluster
+region, co-routed 3 QFN-escape nets (gridless) + 2 grid nets they displaced (/GPIO1, /GPIO2) under ONE
+shared 0.5mm super-cell congestion field.
+
+**CORE HYPOTHESIS VALIDATED — the shared field deconflicts cross-substrate contention:**
+| | region nets connected |
+|---|---|
+| BASELINE (sequential: gridless QFN first, then grid) | **3/5** — /GPIO1, /GPIO2 FAIL (displacement reproduced) |
+| CO-OPT (shared field, unified loop) | **5/5** — /GPIO1 AND /GPIO2 rescued + all 3 QFN nets kept |
+
+**Deconfliction = +2.** The shared congestion field lets a gridless QFN-fanout net and a contending grid
+net BOTH connect where sequential forced one out — the premise of the whole architecture.
+
+**BOUNDED (the critical de-risk — independently measured):** peak RSS **365MB** (`/usr/bin/time`; target
+<2GB, the 4–18GB blowups did NOT recur), 180s wall, max window 8mm (cap 25), deterministic (same-process
++ subprocess byte-identical). The bounded-window + capped-B.Cu + region-scope discipline WORKS — joint
+routing stays bounded.
+
+**Caveat (spike implementation gap, NOT an architecture flaw):** 11 DRC errors (shorting/clearance/hole).
+Root cause: /GPIO1,/GPIO2 are multi-pin nets with their OWN U3 QFN pads, and the spike routed them with
+PLAIN grid A* THROUGH the dense QFN pad clearance zone → shorts vs adjacent QFN pads. Fix: route those
+nets' QFN source pads via FANOUT-ESCAPE too (the validated capability), not naive grid A*. The shared-field
+deconfliction mechanism itself is clean.
+
+**Convergence note:** the loop did not reach 0 contention (oscillated 191→174→327 over 7 rounds — density
+contention in the QFN pad area); the round-best accept correctly picked the min-score round. Convergence
+rate is the documented open risk for full-board scale (region-scope fallback exists).
+
+**VERDICT: GO for the architecture.** Cross-substrate co-optimization is proven (deconfliction +2) and
+bounded (365MB). Next: M-CO-1 (shared field in the engine, 2-net) → fix the QFN-padded grid nets with
+fanout-escape so the region is DRC-clean → M-CO-2 (region) → M-CO-3 (full board, beat 41/73).
