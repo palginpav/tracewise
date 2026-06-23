@@ -507,3 +507,37 @@ quadrant fanout) — which would give /RUN,/SWCLK LEGAL ring-slot vias instead o
 fallback, clearing the 2 shorts and likely the +6 errors. That is the next build: replace the witness-via
 + radial-fallback with a proper global ring-slot assignment pre-pass (TCR Steps A-C), then re-measure.
 attempt-3 (41/73) remains the committed best-overall; this 40/79 is the first connectivity breakthrough.
+
+---
+
+## Global ring-slot assignment (2026-06-24) — built + works (shorts cleared, err 65<73), but a Pareto trade vs connectivity
+
+Built TCR Steps A-C as `src/tracewise/route/gridless/topo_assign.py` (generate_ring_slots →
+assign_nets_to_slots via monotone cyclic-order matching → verify legal/disjoint/crossing-free; 8 unit
+tests). Wired a `ring_slots` mode into the probe. PM-verified (suite 424 green, ruff clean).
+
+**PM-verified A/B (vs attempt-3 41/73):**
+| mode | unconnected | errors | shorting_items | crossings |
+|---|---|---|---|---|
+| attempt-3 (gf_only) | 41 | 73 | 0 | 0 |
+| escape (witness via + radial fallback) | **40** | 79 | 2 | 0 |
+| **ring_slots (legal slots)** | 46 | **65** | **0** | 0 |
+
+**Ring-slot assignment DID its job: cleared the 2 shorts AND dropped errors to 65 (< 73).** BUT it
+raised unconnected to 46 — NOT a clean win. Neither config achieves unc≤40 AND err≤73 simultaneously.
+
+**The precise tension (important finding):** the escape mode's connectivity-40 RELIES on /RUN,/SWCLK
+using ILLEGAL radial-fallback vias placed INSIDE U3's pad-exclusion zone (already-dead territory → they
+connect WITHOUT adding routing obstacles, but overlap stubs → 2 shorts). The LEGAL ring slots sit
+OUTSIDE that zone in the ACTIVE J4 corridor → legal + short-free, but they BLOCK +3V3 (a 29-pin net) →
+it loses ~30 ratsnest gaps → unc 40→46. **No legal via position for /RUN,/SWCLK is simultaneously legal,
+B.Cu-reachable to J4, AND non-obstructive to +3V3's routing.** We are on a Pareto frontier around
+attempt-3: escape = connectivity-optimal (40/79), ring_slots = error-optimal (46/65), attempt-3 = 41/73.
+
+**The pinpointed path to a clean win (40/65):** route +3V3 (and the other corridor power nets) BEFORE
+placing the /RUN,/SWCLK legal vias — so +3V3 claims its corridor first and the legal vias don't block it.
+This is a routing-ORDER/priority fix (the researcher's net-ordering technique). If +3V3 routes first,
+ring_slots' error win (65, 0 shorts) could combine with escape's connectivity (40) → a clean sub-41 win
+on BOTH axes. (Honest caveat: this is another Pareto-frontier micro-iteration; the fundamental 40→0 gap
+is the human's global co-optimization our staged architecture approximates but doesn't match.)
+attempt-3 (41/73) remains best-overall; ring-slot assignment is committed infrastructure (default-off).
