@@ -436,3 +436,41 @@ already present in the engine and REUSED:
   result `e1_developer_tasks`.
 - [ ] **AC9 — no production code in the design.** This doc contains only illustrative
   signatures/pseudo-code, no runnable implementation. Evidence: no full function bodies.
+
+---
+
+## E1 make-or-break gate (2026-06-23) — NO-GO on the strict bar; mechanism promising but doesn't beat 41
+
+`scripts/_probe_tcr_e1.py` + `route_net_steered` (additive ~60 LOC in route.py, default-unused →
+byte-identical). Steered the realizer with the WITNESS'S OWN homotopy classes on the QFN-escape nets.
+PM-verified by independent re-run (`/usr/bin/time`):
+
+| criterion | result | bar | |
+|---|---|---|---|
+| unconnected | **43** | < 41 | FAIL (but < grid-only 48) |
+| errors | **84** | < 73 | FAIL |
+| F.Cu / B.Cu illegal crossings | **0 / 0** | 0 | **PASS** |
+| peak RSS | 0.92GB | < 2GB | PASS |
+| via steering honored | 6/9 | ≥ 80% | partial |
+| determinism (connectivity) | 43 every run | — | stable (hashes differ = zone-fill) |
+
+**NO-GO on the strict gate (43 ≥ 41, 84 ≥ 73).** BUT the make-or-break fear ("the realizer can't be
+steered") is ALLAYED: steering partially WORKS (6/9 witness vias honored) and the topology realization is
+**crossing-free (0 illegal crossings)** — the structural win the greedy approaches never had. 11/13
+escape nets realized; **GPIO9 fails (`bcu_run_failed`)** because the `lane_y_mm` enforcement the design
+specified was NOT implemented in the E1 probe → GPIO9's B.Cu lane crosses GPIO14's.
+
+**Honest gap analysis (why it doesn't beat attempt-3):** (1) connectivity 43 vs 41 — proximate cause is
+the unimplemented lane enforcement (GPIO9); fixing it might reach ~41-42 but not clearly below. (2) errors
+84 vs 73 — attempt-3's 73 came from the `gridless_first` mechanism's solder_mask/hole_clearance
+reductions; TCR routes the non-escape nets via plain grid, so it doesn't replicate that. Beating
+attempt-3 on BOTH axes would require lane enforcement (connectivity) AND gridless_first integration
+(errors) — substantial further work with an uncertain payoff (may TIE 41, not beat).
+
+**VERDICT: the E1 gate did its job — killed cheaply (~1 day, zero production impact; `route_net_steered`
+is additive/unused).** The investigation's lasting value: PROVED (via both inventors + this gate) that
+mitayi's gap is homotopy/ordering not capacity, and that crossing-free topology realization IS achievable
+(0 crossings). But TCR does not beat attempt-3 as-tested. **attempt-3 (commit 9ae76ea, mitayi 48/87 →
+41/73) REMAINS THE DEFINITIVE BEST.** Closing the last gap to the human's 0/0 needs either the
+lane-enforcement + gridless_first-integration follow-through (scoped but uncertain) or genuine placement
+co-design — both fresh chapters.

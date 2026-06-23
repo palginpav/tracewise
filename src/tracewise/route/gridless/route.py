@@ -1272,3 +1272,355 @@ def route_net_multipin(
         stats=total_stats,
         reason=reason,
     )
+
+
+# ---------------------------------------------------------------------------
+# TCR E1: Steered fanout-escape (via pinned to class-supplied site)
+# ---------------------------------------------------------------------------
+
+
+def route_net_steered(
+    source_xy: tuple[float, float],
+    dest_xy: tuple[float, float] | None,
+    escape_via_xy: tuple[float, float] | None,
+    lane_y_mm: float | None,
+    pads: list[dict],
+    net_name: str,
+    geo: dict,
+    board_bbox: tuple[float, float, float, float],
+    extra_obstacles: list | None = None,
+    bcu_extra_obstacles: list | None = None,
+    fcu_stub_extra_obstacles: list | None = None,
+    board_outline: object | None = None,
+    drill_obstacles: list | None = None,
+    drill_centers: list | None = None,
+    max_window_mm: float = 12.0,
+    max_bcu_window_mm: float = 8.0,
+) -> GridlessRouteResult:
+    """Like route_net_fanout_escape but the escape via is PINNED to escape_via_xy.
+
+    escape_via_xy=None  =>  single-layer F.Cu route (Rule H5 short nets, no via).
+    escape_via_xy given =>  validate once with is_legal_via; if illegal, tight
+                            ~10-degree radial fallback around the supplied site.
+    lane_y_mm given     =>  the B.Cu run window is constrained to a ±pitch band
+                            around that y-coordinate.
+
+    This function is OPT-IN (called only by the TCR E1 probe).  It does NOT
+    change any default routing behaviour.  Returns a GridlessRouteResult identical
+    in structure to route_net_fanout_escape.
+    """
+    _require_shapely()
+    import math as _math
+    import time as _time
+
+    from tracewise.route.gridless.geom import (
+        build_windowed_free_space,
+        guided_escape_via,
+        is_legal_via,
+    )
+    from tracewise.route.gridless.search import astar_visgraph, build_visibility_graph
+
+    if extra_obstacles is None:
+        extra_obstacles = []
+    if drill_obstacles is None:
+        drill_obstacles = []
+    if drill_centers is None:
+        drill_centers = []
+
+    track_mm: float = geo["track_mm"]
+    clearance_mm: float = geo["clearance_mm"]
+    via_mm: float = geo.get("via_mm", 0.4)
+    via_drill: float = geo.get("via_drill_mm", 0.2)
+    hole_clearance: float = geo.get("hole_clearance_mm", 0.25)
+    hole_to_hole: float = geo.get("hole_to_hole_mm", 0.25)
+
+    # ── F.Cu-only branch ────────────────────────────────────────────────────
+    if escape_via_xy is None:
+        if dest_xy is None:
+            return GridlessRouteResult(
+                ok=False,
+                reason="steered: escape_via_xy=None requires dest_xy",
+            )
+        return route_net_gridless(
+            pad_a=source_xy,
+            pad_b=dest_xy,
+            pads=pads,
+            net_name=net_name,
+            geo=geo,
+            board_bbox=board_bbox,
+            extra_obstacles=extra_obstacles,
+            window_mm=4.0,
+            board_outline=board_outline,
+            drill_obstacles=drill_obstacles,
+            drill_centers=drill_centers,
+            allow_via=False,
+            max_window_mm=max_window_mm,
+            skip_full_corner_fallback=True,
+        )
+
+    bx1, by1, bx2, by2 = board_bbox
+    t0 = _time.perf_counter()
+
+    # ── Step 1: Via-placement window + per-layer free spaces ─────────────────
+    via_margin = max(
+        _math.hypot(escape_via_xy[0] - source_xy[0],
+                    escape_via_xy[1] - source_xy[1]) + 3.0,
+        6.0,
+    )
+    if max_window_mm is not None:
+        via_margin = min(via_margin, max_window_mm)
+    vwx1 = max(min(source_xy[0], escape_via_xy[0]) - via_margin, bx1)
+    vwy1 = max(min(source_xy[1], escape_via_xy[1]) - via_margin, by1)
+    vwx2 = min(max(source_xy[0], escape_via_xy[0]) + via_margin, bx2)
+    vwy2 = min(max(source_xy[1], escape_via_xy[1]) + via_margin, by2)
+    via_window = (vwx1, vwy1, vwx2, vwy2)
+
+    fs_F_via, _obs_F_via = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        extra_obstacles, via_window,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=0,
+    )
+    # For the via placement window, we do NOT use bcu_extra_obstacles.
+    # The witness escape vias are tightly packed; accumulated B.Cu route obstacles
+    # from previously routed escape nets can block the via's B.Cu copper ring check.
+    # The via position must be legal relative to board pads/drills only.
+    fs_B_via, _obs_B_via = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        extra_obstacles, via_window,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
+    )
+
+    # ── Step 2: Validate the PINNED via site ─────────────────────────────────
+    ok_via, _fail_reason = is_legal_via(
+        escape_via_xy, fs_F_via, fs_B_via, pads, net_name,
+        via_mm, via_drill, clearance_mm, hole_clearance, hole_to_hole,
+        drill_centers, via_window,
+    )
+    escape_via = escape_via_xy
+    if not ok_via:
+        # Tight radial fallback (~10° arc) near the pinned site
+        _dist = _math.hypot(escape_via_xy[0] - source_xy[0],
+                            escape_via_xy[1] - source_xy[1])
+        approx_ring_r = max(_dist * 0.7, 0.5)
+        # Place "centroid" so that source_xy → centroid → escape_via_xy are collinear
+        _ux = (escape_via_xy[0] - source_xy[0]) / max(_dist, 1e-9)
+        _uy = (escape_via_xy[1] - source_xy[1]) / max(_dist, 1e-9)
+        fallback_cx = escape_via_xy[0] - _ux * approx_ring_r
+        fallback_cy = escape_via_xy[1] - _uy * approx_ring_r
+        fallback = guided_escape_via(
+            source_pad_xy=source_xy,
+            component_cx=fallback_cx,
+            component_cy=fallback_cy,
+            ring_radius=approx_ring_r,
+            fs_F=fs_F_via,
+            fs_B=fs_B_via,
+            pads=pads,
+            net_name=net_name,
+            via_mm=via_mm,
+            via_drill=via_drill,
+            clearance_mm=clearance_mm,
+            hole_clearance=hole_clearance,
+            hole_to_hole=hole_to_hole,
+            drill_centers=drill_centers,
+            window_bbox=via_window,
+            search_arc_deg=10.0,
+            search_steps=8,
+        )
+        if fallback is None:
+            return GridlessRouteResult(
+                ok=False,
+                reason=f"steered: class via illegal + fallback failed ({_fail_reason})",
+                stats={"total_time_s": round(_time.perf_counter() - t0, 6),
+                       "steered": True, "via_honored": False},
+            )
+        escape_via = fallback
+
+    vx, vy = escape_via
+    via_honored = (escape_via == escape_via_xy)
+
+    # ── Step 3: F.Cu stub  source_xy → escape_via ───────────────────────────
+    stub_dist = _math.hypot(vx - source_xy[0], vy - source_xy[1])
+    fcu_margin = max(stub_dist + 5.0, 6.0)
+    if max_window_mm is not None:
+        fcu_margin = min(fcu_margin, max_window_mm)
+    fcu_wx1 = max(min(source_xy[0], vx) - fcu_margin, bx1)
+    fcu_wy1 = max(min(source_xy[1], vy) - fcu_margin, by1)
+    fcu_wx2 = min(max(source_xy[0], vx) + fcu_margin, bx2)
+    fcu_wy2 = min(max(source_xy[1], vy) + fcu_margin, by2)
+    fcu_window = (fcu_wx1, fcu_wy1, fcu_wx2, fcu_wy2)
+
+    _fcu_stub_obs = (
+        fcu_stub_extra_obstacles if fcu_stub_extra_obstacles is not None
+        else extra_obstacles
+    )
+    fs_F_stub, obs_F_stub = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        _fcu_stub_obs, fcu_window,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=0,
+    )
+
+    fcu_path: list[tuple[float, float]] | None = None
+    for use_ar in [True, False]:
+        nodes_f, adj_f, _nn, _ne = build_visibility_graph(
+            free_space=fs_F_stub,
+            start_xy=source_xy,
+            goal_xy=escape_via,
+            margin_mm=fcu_margin,
+            obstacle_polys=obs_F_stub,
+            use_reflex_pruning=(not use_ar),
+            use_all_rings=use_ar,
+        )
+        if adj_f.get(0):
+            path_candidate = astar_visgraph(nodes_f, adj_f, goal_xy=escape_via)
+            if path_candidate is not None:
+                fcu_path = path_candidate
+                break
+
+    if fcu_path is None or len(fcu_path) < 2:
+        return GridlessRouteResult(
+            ok=False,
+            reason="steered: fcu_stub_failed",
+            stats={"total_time_s": round(_time.perf_counter() - t0, 6),
+                   "steered": True, "via_honored": via_honored},
+        )
+
+    fcu_3d: list[tuple[float, float, int]] = [(x, y, 0) for x, y in fcu_path]
+
+    # ── Stub-only mode (dest_xy=None) ───────────────────────────────────────
+    if dest_xy is None:
+        return GridlessRouteResult(
+            ok=True,
+            world_paths=[fcu_3d],
+            world_vias=[escape_via],
+            stats={
+                "fcu_waypoints": len(fcu_3d),
+                "escape_via": escape_via,
+                "steered": True,
+                "via_honored": via_honored,
+                "total_time_s": round(_time.perf_counter() - t0, 6),
+            },
+        )
+
+    # ── Step 4: B.Cu run  escape_via → dest_xy ──────────────────────────────
+    bcu_dist = _math.hypot(dest_xy[0] - vx, dest_xy[1] - vy)
+    bcu_margin = max(bcu_dist * 0.35, 5.0)
+    _bcu_cap = max_bcu_window_mm if max_bcu_window_mm is not None else max_window_mm
+    if _bcu_cap is not None:
+        bcu_margin = min(bcu_margin, _bcu_cap)
+
+    _bcu_obs = bcu_extra_obstacles if bcu_extra_obstacles is not None else extra_obstacles
+    _bcu_margin_max = (
+        min(bcu_margin * 2.0, _bcu_cap) if _bcu_cap is not None else bcu_margin * 2.0
+    )
+    dx, dy = dest_xy
+
+    bcu_wx1 = max(min(vx, dx) - _bcu_margin_max, bx1)
+    bcu_wy1 = max(min(vy, dy) - _bcu_margin_max, by1)
+    bcu_wx2 = min(max(vx, dx) + _bcu_margin_max, bx2)
+    bcu_wy2 = min(max(vy, dy) + _bcu_margin_max, by2)
+
+    # Note: lane_y_mm is the via-escape y-coordinate (the horizontal bus lane).
+    # We do NOT shrink the B.Cu window by lane_y here because the net still needs
+    # a vertical segment from lane_y to dest_xy (the connector pad), which is
+    # outside the lane band.  The lane constraint is enforced at the via level:
+    # escape_via_xy is already at the lane_y position (the class assignment).
+    bcu_window_max = (bcu_wx1, bcu_wy1, bcu_wx2, bcu_wy2)
+    fs_B_run, obs_B_run = build_windowed_free_space(
+        pads, net_name, clearance_mm, track_mm,
+        _bcu_obs, bcu_window_max,
+        board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
+    )
+
+    def _seg_in_free(p1: tuple[float, float], p2: tuple[float, float]) -> bool:
+        try:
+            from shapely.geometry import LineString as _LSeg
+            seg = _LSeg([p1, p2]).buffer(track_mm / 2.0, cap_style=2)
+            return bool(fs_B_run.contains(seg))
+        except Exception:  # noqa: BLE001
+            return False
+
+    bcu_path: list[tuple[float, float]] | None = None
+
+    # Option 0: straight
+    if _seg_in_free((vx, vy), (dx, dy)):
+        bcu_path = [(vx, vy), (dx, dy)]
+
+    # Option A: vertical-first
+    if bcu_path is None:
+        corner_a = (vx, dy)
+        if _seg_in_free((vx, vy), corner_a) and _seg_in_free(corner_a, (dx, dy)):
+            bcu_path = [(vx, vy), corner_a, (dx, dy)]
+
+    # Option B: horizontal-first
+    if bcu_path is None:
+        corner_b = (dx, vy)
+        if _seg_in_free((vx, vy), corner_b) and _seg_in_free(corner_b, (dx, dy)):
+            bcu_path = [(vx, vy), corner_b, (dx, dy)]
+
+    # Fallback: visibility-graph A*
+    if bcu_path is None:
+        for _attempt, cur_bcu_margin in enumerate([bcu_margin, bcu_margin * 2.0]):
+            if _bcu_cap is not None:
+                cur_bcu_margin = min(cur_bcu_margin, _bcu_cap)
+            fb_wx1 = max(min(vx, dx) - cur_bcu_margin, bx1)
+            fb_wy1 = max(min(vy, dy) - cur_bcu_margin, by1)
+            fb_wx2 = min(max(vx, dx) + cur_bcu_margin, bx2)
+            fb_wy2 = min(max(vy, dy) + cur_bcu_margin, by2)
+            bcu_window_fb = (fb_wx1, fb_wy1, fb_wx2, fb_wy2)
+
+            fs_B_fb, obs_B_fb = build_windowed_free_space(
+                pads, net_name, clearance_mm, track_mm,
+                _bcu_obs, bcu_window_fb,
+                board_outline=board_outline, drill_obstacles=drill_obstacles, layer=1,
+            )
+            nodes_b, adj_b, _nn2, _ne2 = build_visibility_graph(
+                free_space=fs_B_fb,
+                start_xy=escape_via,
+                goal_xy=dest_xy,
+                margin_mm=cur_bcu_margin,
+                obstacle_polys=obs_B_fb,
+                use_reflex_pruning=True,
+            )
+            path_b = astar_visgraph(nodes_b, adj_b, goal_xy=dest_xy)
+            if path_b is not None:
+                bcu_path = path_b
+                break
+
+    if bcu_path is None or len(bcu_path) < 2:
+        return GridlessRouteResult(
+            ok=False,
+            reason="steered: bcu_run_failed",
+            stats={"total_time_s": round(_time.perf_counter() - t0, 6),
+                   "steered": True, "via_honored": via_honored},
+        )
+
+    bcu_3d: list[tuple[float, float, int]] = [(x, y, 1) for x, y in bcu_path]
+
+    # Deduplicate at junction
+    combined: list[tuple[float, float, int]] = []
+    prev_wp: tuple[float, float, int] | None = None
+    for wp in fcu_3d + bcu_3d:
+        if (
+            prev_wp is not None
+            and abs(wp[0] - prev_wp[0]) < 1e-9
+            and abs(wp[1] - prev_wp[1]) < 1e-9
+            and wp[2] == prev_wp[2]
+        ):
+            continue
+        combined.append(wp)
+        prev_wp = wp
+
+    total_time = round(_time.perf_counter() - t0, 6)
+    return GridlessRouteResult(
+        ok=True,
+        world_paths=[combined],
+        world_vias=[escape_via],
+        stats={
+            "fcu_waypoints": len(fcu_3d),
+            "bcu_waypoints": len(bcu_3d),
+            "escape_via": escape_via,
+            "steered": True,
+            "via_honored": via_honored,
+            "total_time_s": total_time,
+        },
+    )

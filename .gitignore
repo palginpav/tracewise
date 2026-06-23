@@ -19,3 +19,5 @@ runs/
 .mco1_measure_tmp/
 .spike_coopt_tmp/
 .mco3_measure_tmp/
+tcr_e1_out/
+.tcr_e1_tmp/
