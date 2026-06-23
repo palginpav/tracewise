@@ -719,3 +719,36 @@ load-bearing) or hold at 41 (if they were giving false connections) — the re-m
 
 Status: M-CO-3 is ONE scoped fix from a potential win (beat 41, DRC-clean). Deconfliction + bounded
 runtime at full-board scale are PROVEN; the rasterization-gap fix is the remaining blocker.
+
+---
+
+## M-CO-3 hard-block fix (2026-06-23) — NO-GO: full-board coopt does NOT beat attempt-3
+
+Applied the known fix (`_hardblock_coopt_copper` in multi.py: double-mark coopt copper so a pad-carve
+can't erase it to FREE → grid pass routes clearance-away). It WORKED on the DRC errors: 136 → 45
+(tracks_crossing 28→7, shorting 27→4). `coopt=None` byte-identical; 416 tests; ruff clean.
+
+**BUT unconnected ROSE to 63** (attempt-3 = 41; grid-only = 48). **Full-board coopt, done DRC-honestly,
+does NOT beat attempt-3 — it's worse than grid-only.**
+
+**The decisive insight:** the earlier "41/136" result was PARTLY ILLUSORY — the grid pass was making
+ILLEGAL crossings through the coopt copper's rasterization gaps, and those illegal crossings COUNTED as
+connections. Hard-blocking the coopt copper (correctly) removes those false connections → unc rises to
+63. So the coopt deconfliction that looked like a tie at 41 was inflated by DRC-illegal grid routes.
+
+**Root cause of the 63:** (1) at full-cluster scale only 18/26 nets route via coopt (8 QFN-escape nets
+still fail — fanout-escape connects fewer at full scale than in isolation); (2) the correctly
+hard-blocked coopt copper OVER-CONSTRAINS the subsequent grid pass → MORE grid nets fail than coopt
+connects. Net: 63 > 41.
+
+**CONCLUSION — cross-substrate co-optimization does NOT beat attempt-3 on full-board mitayi.** The
+shared-field deconfliction mechanism is genuinely valid at REGION scale (Spike-CoOpt 5/5; M-CO-1 6/6,
+0 DRC, bounded — all real). But deployed over the full contending cluster it over-constrains the
+grid-dominant route and nets WORSE (63 DRC-clean, or a 41 inflated by illegal crossings). The grid
+router's global flexibility on the human placement beats a cluster-pre-routing approach.
+
+**attempt-3 (commit 9ae76ea, mitayi 48/87 → 41/73, gridless-first negotiate) REMAINS THE DEFINITIVE
+BEST SCORECARD RESULT.** The hard-block fix is kept (it makes the opt-in coopt path DRC-honest); coopt
+stays opt-in (default OFF = byte-identical). Beating 41 further appears to need either a much stronger
+fanout-escape (route all 17 QFN nets, not 8-10) WITHOUT over-constraining the grid, or genuine
+placement changes — both large, separate chapters.

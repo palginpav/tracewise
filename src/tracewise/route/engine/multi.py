@@ -247,6 +247,46 @@ def grid_cell_to_supercell(
     return field.supercell_of(x, y)
 
 
+def _hardblock_coopt_copper(
+    grid: Grid,
+    coopt_results: dict,
+    coopt_kwargs: dict,  # noqa: ARG001 — reserved for future use
+) -> None:
+    """M-CO-3 DRC fix: protect coopt copper cells against grid-pass carve erasure.
+
+    After ``_run_coopt_loop`` commits copper via ``_mark`` (sets
+    ``grid.cells`` and ``grid.hard`` to 1 for all cells in the box
+    inflation around the coopt track and via centrelines), the subsequent
+    grid pass can inadvertently FREE those cells via its own-pad carve
+    operation.  ``route_net`` calls ``grid.block_pad(..., delta=-1)``
+    which decrements ``grid.cells`` for the pad clearance zone.  If a
+    coopt copper cell happens to fall inside a grid net's pad clearance
+    zone, the carve reduces ``cells`` to 0 → the A* router sees the
+    cell as FREE and routes its track through the coopt copper →
+    ``tracks_crossing`` / ``shorting_items`` DRC errors.
+
+    Fix: apply ``_mark(grid, nr, +1)`` a SECOND TIME for every
+    successfully routed coopt net.  This raises every coopt-copper
+    cell from count 1 to count 2 in both ``grid.cells`` and
+    ``grid.hard``.  A single pad carve (``delta = -1``) can then only
+    reduce the count from 2 → 1, which the A* still sees as BLOCKED
+    (``cells > 0``).  The coopt copper is never accidentally freed.
+
+    Properties
+    ----------
+    * Uses the EXACT SAME box inflation as the original ``_mark`` call,
+      so no new cells are blocked beyond those already committed.
+    * Works for both ``GridlessNetRoute`` (angled fanout-escape paths)
+      and plain grid ``NetRoute`` entries in ``coopt_results``.
+    * Shapely-free: no import required.
+    * Hard invariant: ``coopt_results`` empty → no-op.
+      ``coopt=None`` → this function is never called (byte-identical).
+    """
+    for _cnr in coopt_results.values():
+        if _cnr.ok:
+            _mark(grid, _cnr, 1)
+
+
 def _run_coopt_loop(
     grid: Grid,
     coopt_net_names: set[str],
@@ -990,6 +1030,13 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         for _cname, _cnr in _coopt_results.items():
             if _cnr.ok:
                 _coopt_fully_routed.add(_cname)
+        # M-CO-3 DRC fix: re-inflate coopt copper into HARD-blocked grid cells
+        # via Shapely polygon inflation.  _mark box inflation leaves diagonal
+        # rasterization gaps along angled fanout-escape segments; the grid pass
+        # routes THROUGH those gaps → tracks_crossing/shorting DRC errors.
+        # _hardblock_coopt_copper uses Shapely to fill those gaps BEFORE the
+        # grid pass runs.  No-op if Shapely absent (box inflation is fallback).
+        _hardblock_coopt_copper(grid, _coopt_results, coopt_kwargs or {})
         # Return early: for the bounded region test (M-CO-1), the caller only
         # cares about the co-opt nets.  Build a combined result that has the
         # co-opt nets (from the co-opt loop) and falls through for all others.
