@@ -631,3 +631,91 @@ The shared-field cross-substrate co-optimization is now in the engine, reproduce
 AND is DRC-clean — bounded and deterministic. Next: M-CO-2 (expand to the full QFN region + its ~7
 grid-contending neighbors) → M-CO-3 (full board, beat attempt-3's 41/73). Open risk remains convergence
 rate at full-board scale (region-scope fallback documented); M-CO-3 will measure it.
+
+---
+
+## M-CO-2/3 (2026-06-23) — MEASURED: full-board coopt={26-net cluster}, GATE NOT MET
+
+`scripts/mco3_measure.py` (PM-verifiable — bounded, deterministic unc). Full-board mitayi HUMAN
+placement, `route_board_engine(coopt={26 nets})`: 17 QFN-escape nets (TARGET_NETS_17) + 9
+grid-contending neighbors (/GPIO1,2,11,12,16,17,21,22,25). Coopt loop region-scoped to QFN pad
+bbox+6mm (bounded); rest of board on normal grid.
+
+**Measured scorecard (canonical A/B, `run_drc severity==error`):**
+| | unconnected | errors | tracks_crossing | shorting_items | peak RSS | time |
+|---|---|---|---|---|---|---|
+| Grid-only baseline | 48 | 88 | 0 | 0 | 113MB | 170s |
+| Attempt-3 bar | **41** | **73** | — | — | — | — |
+| Coopt full cluster (run1) | **41** | **136** | **28** | **27** | 193MB | 173s |
+| Coopt full cluster (run2) | 41 | 136 | 31 | 25 | — | 174s |
+
+**What worked:**
+- Unconnected: 48→41 (−7 vs grid-only) — TIES attempt-3 on unc. Coopt connects 19/26 cluster nets.
+- Zero grid nets displaced (all 9 grid-contending neighbors either connected or stayed inside cluster).
+- **Bounded: 193MB peak RSS** (limit 4GB), 173s runtime — the 4–18GB blowups did NOT recur.
+- **Deterministic unc**: 41 both runs.
+
+**What failed (gate NOT met):**
+- Does NOT beat attempt-3: 41=41 (bar requires <41).
+- **tracks_crossing=28, shorting_items=27** — severe DRC regression vs attempt-3 (73→136 errors).
+  Root cause: fanout-escape copper committed to the grid as inflated cells, but the subsequent grid
+  pass routes between the rasterized 0.1mm cells producing Shapely-visible crossings at emit time.
+  The rasterization mismatch is the specific failure: gridless copper's exact geometry is encoded at
+  0.1mm grid resolution, and grid tracks routed in the "gaps" between rasterized cells later violate
+  actual Shapely clearance. This is NOT a coopt mechanism failure — the deconfliction works (0 grid
+  displacement) — it is a grid-vs-gridless obstacle representation gap.
+- 7/26 cluster nets still unconnected: /GPIO14, /GPIO18, /GPIO3, /GPIO4, /QSPI_SCLK, /RUN, /USB_D+.
+
+**Root cause analysis:**
+The coopt loop (`_run_coopt_loop`) marks fanout-escape copper into `grid.cells/hard` at `halfwidth_cells`
+inflation (0.1mm grid). The grid pass runs afterward and correctly avoids marked cells. BUT: the
+fanout-escape routes use exact Shapely geometry (world-mm) which includes angled track segments. When
+rasterized at 0.1mm, diagonal segments leave gaps (cells not covered due to the 0.1mm lattice). The
+grid A* can find paths through these rasterization gaps — legal on the grid but DRC-illegal in
+world-mm geometry. This is the same rasterization-vs-reality gap identified in the FAR design doc for
+the gridless-first path, but more severe here because the cluster is large (26 nets × multi-segment
+paths = many grid gaps).
+
+**Required fix before gate can be met:**
+After the coopt loop commits copper (step before grid pass), inflate gridless copper obstacles into
+`gridless_kwargs["extra_gridless_obstacles"]` for the grid pass — OR use exact-geometry Shapely
+obstacles as grid-forbidden regions. Concretely: call `net_routes_to_track_obstacles` on the coopt
+results and add them to the grid ledger as hard-blocked cells. This is the same fix used in the
+gridless_rescue path (line ~1982 in multi.py). Without it, the grid pass creates physically-illegal
+routes.
+
+**VERDICT: NO-GO at current implementation.** The unconnected count reaches the attempt-3 bar (41=41)
+but DRC is far worse (136 vs 73). The blocking issue is not the co-optimization mechanism (which
+proved deconfliction in M-CO-1 and produces 0 grid displacement here) — it is the grid pass routing
+through rasterization gaps in the coopt copper. Fix: inflate exact-geometry coopt copper into hard-
+blocked cells before the grid pass. This is a targeted engineering fix, not an architecture change.
+
+---
+
+## M-CO-2/3 (2026-06-23) — full-board coopt TIES 41 with a known DRC bug; one fix from the win
+
+Expanded the coopt cluster to 26 nets (17 QFN-escape + 9 grid-contending neighbors); ran full-board
+`route_board_engine(coopt={cluster})` (coopt loop region-scoped to the QFN cluster, grid for the rest).
+PM-to-verify A/B (grid-only vs coopt), canonical method:
+
+| | unconnected | errors | tracks_crossing | shorting |
+|---|---|---|---|---|
+| grid-only | 48 | 88 | 0 | 0 |
+| **attempt-3 (BAR)** | **41** | **73** | — | — |
+| coopt (this) | **41** | 136 | 28 | 27 |
+
+**TIES attempt-3 on unconnected (41, does NOT beat it), +63 DRC errors.** The deconfliction SCALES:
+19/26 cluster nets connected, **0 grid displacement** (coopt prevented the displacement that sank the
+sequential builds), bounded (193MB/173s), deterministic unc. BUT a KNOWN rasterization-gap bug causes
+the +63 errors: fanout-escape copper is committed to `grid.cells` at 0.1mm, angled Shapely segments
+leave grid-cell GAPS, and the subsequent grid pass routes THROUGH the gaps → physically-illegal
+tracks_crossing/shorting.
+
+**The fix is known + already exists in `gridless_rescue` (multi.py ~1982):** after the coopt loop
+commits copper, call `net_routes_to_track_obstacles()` on the coopt results and inflate them into
+HARD-blocked grid cells BEFORE the grid pass, so the grid routes clearance-away (no gap-crossing).
+Applying it should clear the +63 errors; unc may improve below 41 (if the illegal crossings were not
+load-bearing) or hold at 41 (if they were giving false connections) — the re-measure decides.
+
+Status: M-CO-3 is ONE scoped fix from a potential win (beat 41, DRC-clean). Deconfliction + bounded
+runtime at full-board scale are PROVEN; the rasterization-gap fix is the remaining blocker.
