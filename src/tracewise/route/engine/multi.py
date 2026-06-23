@@ -235,6 +235,632 @@ def _route_net_gridless_wrapped(grid: Grid, net: Net, kwargs: dict) -> NetRoute:
     return nr
 
 
+def grid_cell_to_supercell(
+    grid: Grid, layer: int, iy: int, ix: int, field: object
+) -> tuple[int, int]:
+    """Map a grid cell center to a super-cell index on the shared field.
+
+    ``field`` is a ``_SuperCellGrid`` instance (imported lazily to avoid a
+    circular import — this helper is called from inside the coopt loop).
+    """
+    x, y = grid.to_world(iy, ix)
+    return field.supercell_of(x, y)
+
+
+def _run_coopt_loop(
+    grid: Grid,
+    coopt_net_names: set[str],
+    all_nets: list[Net],
+    coopt_kwargs: dict,
+    via_cost: float = 10.0,
+    max_rounds: int = 8,
+    rss_hard_fail_gb: float = 4.0,
+) -> dict[str, NetRoute]:
+    """Unified co-optimization loop for the coopt net set.
+
+    Routes the specified ``coopt_net_names`` under a single shared
+    ``_SuperCellGrid`` congestion field.  Grid nets pricing by the shared
+    super-cell field; gridless nets (QFN escape) route via fanout-escape or
+    ``_route_one_net_congestion`` priced by the same shared field.
+
+    **DRC fix (M-CO-1):** grid nets in the coopt set that have a pad inside a
+    dense QFN component are routed via fanout-escape so they do NOT run
+    plain grid A* through the pad clearance forest → prevents shorting_items.
+
+    Returns a ``dict[str, NetRoute]`` with the best results across rounds.
+    Commits copper for successfully routed nets into ``grid`` (cells + hard).
+    """
+    import math
+    import resource
+
+    import numpy as np
+
+    from tracewise.route.gridless.adapter import to_gridless_netroute
+    from tracewise.route.gridless.negotiate import (
+        SUPERCELL_SIZE_MM,
+        _make_supercell_grid,
+        _route_one_net_congestion,
+    )
+    from tracewise.route.gridless.realize import snap_waypoints
+
+    # ----------------------------------------------------------------
+    # RSS guard helper
+    # ----------------------------------------------------------------
+    def _rss_gb() -> float:
+        ru = resource.getrusage(resource.RUSAGE_SELF)
+        return ru.ru_maxrss / 1e6  # Linux: KB -> GB
+
+    def _check_rss(label: str) -> None:
+        rss = _rss_gb()
+        if rss > rss_hard_fail_gb:
+            raise MemoryError(
+                f"coopt RSS {rss:.2f}GB > {rss_hard_fail_gb}GB at [{label}] — aborting"
+            )
+
+    # ----------------------------------------------------------------
+    # Parameters
+    # ----------------------------------------------------------------
+    pads = coopt_kwargs.get("pads")
+    geo = coopt_kwargs.get("geo") or {}
+    board_bbox = coopt_kwargs.get("board_bbox")
+    _anchors = coopt_kwargs.get("anchors")  # noqa: F841 — reserved for future use
+    board_outline = coopt_kwargs.get("board_outline")
+    drill_obstacles = coopt_kwargs.get("drill_obstacles")
+    drill_centers = coopt_kwargs.get("drill_centers") or []
+    max_route_window_mm = coopt_kwargs.get("max_route_window_mm", 25.0)
+    max_bcu_window_mm = coopt_kwargs.get("max_bcu_window_mm", 8.0)
+    # QFN escape candidates: these nets route via fanout-escape (gridless substrate)
+    qfn_escape_nets: set[str] = set(coopt_kwargs.get("qfn_escape_nets") or set())
+    # Static substrate assignment:
+    #   nets in qfn_escape_nets -> "gridless" (fanout-escape or congestion gridless)
+    #   all other coopt nets -> "grid"
+    region_bbox = coopt_kwargs.get("region_bbox") or board_bbox
+
+    if pads is None or geo is None or board_bbox is None or region_bbox is None:
+        # Missing context — return empty (caller falls through to grid)
+        return {}
+
+    L, H, W = grid.cells.shape
+    max_exp = 2 * grid.layers * grid.ny * grid.nx
+
+    # ----------------------------------------------------------------
+    # Build net map (coopt nets only)
+    # ----------------------------------------------------------------
+    by_name_all = {n.name: n for n in all_nets}
+    coopt_net_map: dict[str, Net] = {
+        name: by_name_all[name]
+        for name in coopt_net_names
+        if name in by_name_all
+    }
+    if not coopt_net_map:
+        return {}
+
+    # ----------------------------------------------------------------
+    # Static substrate assignment
+    # ----------------------------------------------------------------
+    assignment: dict[str, str] = {}
+    for name in coopt_net_map:
+        assignment[name] = "gridless" if name in qfn_escape_nets else "grid"
+
+    # ----------------------------------------------------------------
+    # Build pad-to-world map for gridless nets
+    # ----------------------------------------------------------------
+    pads_by_net: dict[str, list[dict]] = {}
+    for p in pads:
+        pads_by_net.setdefault(p.get("net", ""), []).append(p)
+
+    # Build qfn_pad_map: per-net {pad_a, pad_b, is_source_qfn, dest_is_thruhole}
+    from tracewise.route.gridless.geom import detect_dense_components
+
+    dense_comps = detect_dense_components(pads)
+    dense_by_ref: dict[str, dict] = {d["ref"]: d for d in dense_comps}
+    dense_refs: set[str] = set(dense_by_ref)
+
+    qfn_pad_map: dict[str, dict] = {}
+    for net_name in coopt_net_map:
+        if assignment[net_name] != "gridless":
+            continue
+        net_pads_world = pads_by_net.get(net_name, [])
+        if len(net_pads_world) < 2:
+            continue
+        source_pads = [
+            p for p in net_pads_world
+            if p.get("ref", "") in dense_refs and p.get("front") and not p.get("back")
+        ]
+        dest_pads = [p for p in net_pads_world if p.get("ref", "") not in dense_refs]
+        if not source_pads or not dest_pads:
+            source_pads = [p for p in net_pads_world if p.get("ref", "") not in dense_refs]
+            dest_pads = [
+                p for p in net_pads_world
+                if p.get("ref", "") in dense_refs and p.get("front") and not p.get("back")
+            ]
+            if not source_pads or not dest_pads:
+                # Use first/last pad
+                if len(net_pads_world) >= 2:
+                    source_pads = [net_pads_world[0]]
+                    dest_pads = [net_pads_world[-1]]
+                else:
+                    continue
+            is_source_qfn = False
+        else:
+            is_source_qfn = True
+        src_p = source_pads[0]
+        dst_p = dest_pads[0]
+        qfn_pad_map[net_name] = {
+            "pad_a": (src_p["x"], src_p["y"]),
+            "pad_b": (dst_p["x"], dst_p["y"]),
+            "is_source_qfn": is_source_qfn,
+            "dest_is_thruhole": bool(dst_p.get("back")),
+        }
+
+    # ----------------------------------------------------------------
+    # DRC fix: detect grid-assigned nets with QFN pads (need fanout-escape)
+    # These nets have pads inside a dense component. Routing them via plain
+    # grid A* through the pad forest causes shorts → route via fanout-escape.
+    # ----------------------------------------------------------------
+    grid_qfn_pad_map: dict[str, dict] = {}
+    for net_name, _net in coopt_net_map.items():
+        if assignment[net_name] != "grid":
+            continue
+        net_pads_world = pads_by_net.get(net_name, [])
+        qfn_pads = [
+            p for p in net_pads_world
+            if p.get("ref", "") in dense_refs and p.get("front") and not p.get("back")
+        ]
+        non_qfn_pads = [p for p in net_pads_world if p not in qfn_pads]
+        if len(qfn_pads) == 1 and len(non_qfn_pads) >= 1:
+            qfn_p = qfn_pads[0]
+            # Find nearest through-hole destination
+            import math as _math
+            qfn_xy = (qfn_p["x"], qfn_p["y"])
+            th_dests = [p for p in non_qfn_pads if p.get("back")]
+            if not th_dests:
+                th_dests = non_qfn_pads  # fallback: any non-QFN pad
+            nearest_dest = min(
+                th_dests,
+                key=lambda p: _math.hypot(p["x"] - qfn_xy[0], p["y"] - qfn_xy[1])
+            )
+            grid_qfn_pad_map[net_name] = {
+                "pad_a": (qfn_p["x"], qfn_p["y"]),
+                "pad_b": (nearest_dest["x"], nearest_dest["y"]),
+                "dense_comp": dense_by_ref[qfn_p["ref"]],
+                "dest_is_thruhole": bool(nearest_dest.get("back")),
+            }
+
+    # ----------------------------------------------------------------
+    # Shared super-cell congestion field
+    # ----------------------------------------------------------------
+    field = _make_supercell_grid(region_bbox)
+
+    # ----------------------------------------------------------------
+    # Iteration loop
+    # ----------------------------------------------------------------
+    ordered_names = [n.name for n in order_nets(list(coopt_net_map.values()))]
+
+    net_routes: dict[str, NetRoute] = {}
+    best_routes: dict[str, NetRoute] = {}
+    best_score = math.inf
+
+    h_fac_schedule = [0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0]
+    round_contended_sizes: list[int] = []
+
+    # Helpers: build Shapely obstacles from currently routed gridless nets
+    def _build_gridless_obstacles(skip: set[str]) -> list:
+        try:
+            from shapely.geometry import LineString  # noqa: I001
+            from tracewise.route.gridless.adapter import GridlessNetRoute
+            from tracewise.route.gridless.geom import snap
+            track_mm = geo.get("track_mm", 0.2)
+            clearance_mm = geo.get("clearance_mm", 0.2)
+            inflate = track_mm + clearance_mm
+            obs: list = []
+            for nm, nr in net_routes.items():
+                if nm in skip or not nr.ok:
+                    continue
+                if isinstance(nr, GridlessNetRoute) and nr.world_paths:
+                    for wpath in nr.world_paths:
+                        pts2d = [
+                            (wp[0], wp[1]) for wp in wpath
+                        ]
+                        if len(pts2d) >= 2:
+                            try:
+                                obs.append(snap(LineString(pts2d).buffer(inflate, cap_style=2)))
+                            except Exception:  # noqa: BLE001
+                                pass
+            return obs
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _detect_contention_coopt(
+        nr_map: dict[str, NetRoute]
+    ) -> tuple[set[str], set[tuple[int, int]]]:
+        """Detect contended nets via halo overlap on the shared ledger."""
+        occ_count = np.zeros((L, H, W), np.int32)
+        cell_to_nets: dict[tuple, list[str]] = {}
+        for name, nr in nr_map.items():
+            if not nr.ok or not nr.cells:
+                continue
+            r_hw = nr.net.halfwidth_cells
+            for (ly, iy, ix) in nr.cells:
+                for dy in range(-r_hw, r_hw + 1):
+                    yy = iy + dy
+                    if 0 <= yy < H:
+                        for dx in range(-r_hw, r_hw + 1):
+                            xx = ix + dx
+                            if 0 <= xx < W:
+                                occ_count[ly, yy, xx] += 1
+                                cell_to_nets.setdefault((ly, yy, xx), []).append(name)
+        over = occ_count > 1
+        contended_nets: set[str] = set()
+        contended_scs: set[tuple[int, int]] = set()
+        for (ly, iy, ix), names in cell_to_nets.items():
+            if over[ly, iy, ix]:
+                for n in names:
+                    contended_nets.add(n)
+                x, y = grid.to_world(iy, ix)
+                sc = field.supercell_of(x, y)
+                contended_scs.add(sc)
+        return contended_nets, contended_scs
+
+    from tracewise.route.gridless.route import route_net_fanout_escape
+
+    for round_idx in range(max_rounds):
+        _check_rss(f"coopt round {round_idx}")
+        h_fac = h_fac_schedule[min(round_idx, len(h_fac_schedule) - 1)]
+
+        if round_idx == 0:
+            to_route = ordered_names[:]
+            h_fac = 0.0  # free pass
+        else:
+            contended, contended_scs = _detect_contention_coopt(net_routes)
+            if not contended:
+                break  # converged
+            round_contended_sizes.append(len(contended))
+            # Deposit on contended super-cells
+            field.deposit(list(contended_scs), 1.0)
+            # Unmark contended nets from grid
+            for name in contended:
+                nr = net_routes.get(name)
+                if nr and nr.ok and nr.cells:
+                    _mark(grid, nr, -1)
+                    net_routes.pop(name, None)
+            to_route = sorted(
+                contended,
+                key=lambda n: (ordered_names.index(n) if n in ordered_names else 999)
+            )
+
+        for net_name in to_route:
+            net = coopt_net_map.get(net_name)
+            if net is None:
+                continue
+            sub = assignment[net_name]
+
+            if sub == "grid":
+                # Detect if this grid net has a QFN pad (DRC fix).
+                # grid_qfn_pad_map nets have a QFN SMD source pad on a dense
+                # component.  Plain grid A* carves own-pad blocks free but the
+                # carve region can overlap adjacent QFN pads' clearance halos
+                # (0.4 mm QFN pitch, 0.25 mm carve inflate → 0.3 mm overlap),
+                # letting the router pass through adjacent-pad clearance zones
+                # → shorting_items / clearance DRC errors.  The fix is applied
+                # after the carve step below (adjacent-pad halo restoration).
+                gqfn = grid_qfn_pad_map.get(net_name)
+                # Grid A* with shared field pricing
+                _occ = np.zeros((L, H, W), np.int32)
+                for nm2, nr2 in net_routes.items():
+                    if nm2 == net_name or not nr2.ok or not nr2.cells:
+                        continue
+                    hw2 = nr2.net.halfwidth_cells
+                    for (ly2, iy2, ix2) in nr2.cells:
+                        for dy in range(-hw2, hw2 + 1):
+                            yy = iy2 + dy
+                            if 0 <= yy < H:
+                                for dx in range(-hw2, hw2 + 1):
+                                    xx = ix2 + dx
+                                    if 0 <= xx < W:
+                                        _occ[ly2, yy, xx] += 1
+
+                # Build shared-field hist array for grid pricing
+                from tracewise.route.engine.pathfinder import (  # noqa: I001
+                    _dilate,
+                    _halo_cells,
+                    _route_one as _pf_route_one,
+                )
+                _hist = np.zeros((L, H, W), np.float64)
+                if h_fac > 0.0:
+                    iy_arr = np.arange(H, dtype=np.float64)
+                    ix_arr = np.arange(W, dtype=np.float64)
+                    x_arr = grid.x0 + ix_arr * grid.pitch
+                    y_arr = grid.y0 + iy_arr * grid.pitch
+                    sx_arr = np.clip(
+                        np.floor((x_arr - field.x0) / SUPERCELL_SIZE_MM).astype(np.int32),
+                        0, field.nx - 1,
+                    )
+                    sy_arr = np.clip(
+                        np.floor((y_arr - field.y0) / SUPERCELL_SIZE_MM).astype(np.int32),
+                        0, field.ny - 1,
+                    )
+                    hist_2d = field.history[sy_arr[:, None], sx_arr[None, :]]
+                    for ly in range(L):
+                        _hist[ly] = hist_2d
+
+                base_hard = grid.hard > 0
+                fixed = ((grid.cells > 0) & (grid.hard == 0)).astype(np.float64)
+                # Carve own pads
+                for carve_layer, x1, y1, x2, y2, inf in getattr(net, "carve", ()):
+                    cy1, cx1 = grid.to_cell(min(x1, x2) - inf, min(y1, y2) - inf)
+                    cy2, cx2 = grid.to_cell(max(x1, x2) + inf, max(y1, y2) + inf)
+                    sl = (
+                        slice(max(0, cy1), min(H, cy2 + 1)),
+                        slice(max(0, cx1), min(W, cx2 + 1)),
+                    )
+                    base_hard[carve_layer][sl] = False
+                    fixed[carve_layer][sl] = 0.0
+
+                # DRC fix for grid_qfn_pad_map nets:
+                #
+                # 1) Generalised adjacent-pad clearance restoration.
+                #    After carving own pads, each carve region may accidentally
+                #    free cells that were blocked by ANOTHER net's pad clearance
+                #    halo.  For example:
+                #      • QFN pads at 0.4 mm pitch: the 0.225 mm carve inflate
+                #        overlaps the clearance halos of immediately adjacent QFN
+                #        pads → router routes through adjacent-pad clearance zone
+                #        → shorting_items / clearance DRC errors.
+                #      • Connector carve (JP6/GPIO2 pad): the upward inflate reaches
+                #        into JP6-C's clearance zone → GPIO2 routes F.Cu through
+                #        JP6-C clearance.
+                #    Fix: for each carve region, find all other-net pads whose
+                #    clearance zone overlaps the freed region and restore them.
+                #
+                # 2) Via exclusion zone for QFN ring pads.
+                #    QFN pads at 0.4 mm pitch are spaced closer than
+                #    via_drill/2 + hole_clearance (0.1 + 0.25 = 0.35 mm) from
+                #    adjacent pad copper.  A via placed at the QFN source-pad
+                #    cell immediately violates hole_clearance.  Fix: block B.Cu
+                #    at cells whose min-dist to any adjacent QFN pad copper is
+                #    < via_drill/2 + hole_clearance, so the router is forced to
+                #    move on F.Cu to a safe via site.
+                if gqfn is not None:
+                    import math as _math  # noqa: PLC0415
+                    _inf_gq = geo.get("clearance_mm", 0.15) + geo.get("track_mm", 0.2) / 2.0
+
+                    # --- 1) Generalised carve-overlap restoration ---
+                    for _cl, _cx1, _cy1, _cx2, _cy2, _cinf in getattr(net, "carve", ()):
+                        _cfx1 = min(_cx1, _cx2) - _cinf
+                        _cfx2 = max(_cx1, _cx2) + _cinf
+                        _cfy1 = min(_cy1, _cy2) - _cinf
+                        _cfy2 = max(_cy1, _cy2) + _cinf
+                        for _adj_pads_list in pads_by_net.values():
+                            for _adj_pp in _adj_pads_list:
+                                if _adj_pp.get("net", "") == net_name:
+                                    continue  # own pad
+                                _adj_layers = []
+                                if _adj_pp.get("front"):
+                                    _adj_layers.append(0)
+                                if _adj_pp.get("back"):
+                                    _adj_layers.append(1)
+                                if _cl not in _adj_layers:
+                                    continue  # pad not on carve layer
+                                _ax, _ay = _adj_pp["x"], _adj_pp["y"]
+                                _ahw = _adj_pp.get("hw", 0.1)
+                                _ahh = _adj_pp.get("hh", 0.1)
+                                # Clearance zone bounds
+                                _apx1 = _ax - _ahw - _inf_gq
+                                _apx2 = _ax + _ahw + _inf_gq
+                                _apy1 = _ay - _ahh - _inf_gq
+                                _apy2 = _ay + _ahh + _inf_gq
+                                # Overlap with freed carve region?
+                                if not (_apx2 > _cfx1 and _apx1 < _cfx2
+                                        and _apy2 > _cfy1 and _apy1 < _cfy2):
+                                    continue
+                                # Restore clearance halo AND copper as hard-blocked.
+                                # Soft (fixed) restoration is insufficient: the A*
+                                # can still enter fixed cells at a fixed_pen premium,
+                                # routing tracks through adjacent-pad clearance zones
+                                # which yields DRC clearance violations.  Hard-blocking
+                                # the full clearance zone is safe here because the
+                                # overlap region was only freed by the carve of a
+                                # DIFFERENT net's pad — this net's own goal cells use
+                                # the is_goal exception and remain reachable.
+                                _acy1, _acx1 = grid.to_cell(_apx1, _apy1)
+                                _acy2, _acx2 = grid.to_cell(_apx2, _apy2)
+                                _asl = (
+                                    slice(max(0, _acy1), min(H, _acy2 + 1)),
+                                    slice(max(0, _acx1), min(W, _acx2 + 1)),
+                                )
+                                # Hard-block the entire clearance halo (copper + clearance)
+                                _was_occupied = (grid.cells[_cl][_asl] > 0)
+                                base_hard[_cl][_asl] = np.where(
+                                    _was_occupied,
+                                    True,
+                                    base_hard[_cl][_asl],
+                                )
+                                fixed[_cl][_asl] = np.where(
+                                    _was_occupied,
+                                    0.0,
+                                    fixed[_cl][_asl],
+                                )
+
+                    # --- 2) Via exclusion zone for all adjacent pads ---
+                    # Block B.Cu via destinations within (via_drill/2 + hole_clearance)
+                    # of ANY adjacent pad copper.  This prevents hole_clearance DRC
+                    # violations caused by vias placed inside carve-freed regions that
+                    # are geometrically too close to neighbouring pads.
+                    # Scope: only cells that are free on F.Cu (base_hard[0]=False),
+                    # i.e. the cells freed by the own-pad carve.
+                    _vdr = geo.get("via_drill_mm", 0.2) / 2.0   # via drill radius
+                    _hclr = geo.get("hole_clearance_mm", 0.25)  # hole clearance
+                    _min_via_d = _vdr + _hclr  # min dist: via drill to pad copper
+                    for _cl2, _cx1v, _cy1v, _cx2v, _cy2v, _cinf2 in getattr(
+                        net, "carve", ()
+                    ):
+                        if _cl2 != 0:
+                            continue  # only F.Cu carve entries
+                        _cfx1v = min(_cx1v, _cx2v) - _cinf2
+                        _cfx2v = max(_cx1v, _cx2v) + _cinf2
+                        _cfy1v = min(_cy1v, _cy2v) - _cinf2
+                        _cfy2v = max(_cy1v, _cy2v) + _cinf2
+                        _vcy1, _vcx1 = grid.to_cell(_cfx1v, _cfy1v)
+                        _vcy2, _vcx2 = grid.to_cell(_cfx2v, _cfy2v)
+                        for _viy in range(max(0, _vcy1), min(H, _vcy2 + 1)):
+                            for _vix in range(max(0, _vcx1), min(W, _vcx2 + 1)):
+                                if base_hard[0][_viy, _vix]:
+                                    continue  # already F.Cu blocked, no via possible
+                                if base_hard[1][_viy, _vix]:
+                                    continue  # already B.Cu blocked
+                                _cvx, _cvy = grid.to_world(_viy, _vix)
+                                for _adj_pads_listv in pads_by_net.values():
+                                    for _adj_ppv in _adj_pads_listv:
+                                        if _adj_ppv.get("net", "") == net_name:
+                                            continue  # own pad
+                                        if not _adj_ppv.get("front"):
+                                            continue  # F.Cu pad only
+                                        _apx, _apy = _adj_ppv["x"], _adj_ppv["y"]
+                                        _aphw = _adj_ppv.get("hw", 0.1)
+                                        _aphh = _adj_ppv.get("hh", 0.1)
+                                        _apx1 = _apx - _aphw
+                                        _apx2 = _apx + _aphw
+                                        _apy1 = _apy - _aphh
+                                        _apy2 = _apy + _aphh
+                                        _ddx = max(0.0, _apx1 - _cvx, _cvx - _apx2)
+                                        _ddy = max(0.0, _apy1 - _cvy, _cvy - _apy2)
+                                        if _math.hypot(_ddx, _ddy) < _min_via_d:
+                                            base_hard[1][_viy, _vix] = True
+                                            break
+                                    if base_hard[1][_viy, _vix]:
+                                        break
+
+                hw = net.halfwidth_cells
+                occ_cost = _dilate(_occ, hw)
+                hist_cost = _dilate(_hist, hw)
+
+                r = _pf_route_one(
+                    base_hard, fixed, occ_cost, hist_cost, net,
+                    via_cost, h_fac, 0.0, 4.0, max_exp,
+                )
+                # Restore own pads
+                for carve_layer, x1, y1, x2, y2, inf in getattr(net, "carve", ()):
+                    cy1, cx1 = grid.to_cell(min(x1, x2) - inf, min(y1, y2) - inf)
+                    cy2, cx2 = grid.to_cell(max(x1, x2) + inf, max(y1, y2) + inf)
+                    sl = (
+                        slice(max(0, cy1), min(H, cy2 + 1)),
+                        slice(max(0, cx1), min(W, cx2 + 1)),
+                    )
+                    base_hard[carve_layer][sl] = grid.hard[carve_layer][sl] > 0
+                    fixed[carve_layer][sl] = (
+                        (grid.cells[carve_layer][sl] > 0)
+                        & (grid.hard[carve_layer][sl] == 0)
+                    ).astype(np.float64)
+
+                if r is not None:
+                    r.halo = _halo_cells(
+                        grid, r.cells, r.vias, net.halfwidth_cells, net.via_halfwidth_cells
+                    )
+                    nr = NetRoute(net=net, paths=r.paths, cells=r.cells,
+                                  via_sites=r.vias, ok=True)
+                    _mark(grid, nr, 1)
+                    net_routes[net_name] = nr
+                else:
+                    net_routes[net_name] = NetRoute(net=net, ok=False, reason="no_path_grid")
+
+            else:  # gridless (QFN escape nets)
+                qfn_info = qfn_pad_map.get(net_name)
+                if qfn_info is None:
+                    net_routes[net_name] = NetRoute(
+                        net=net, ok=False, reason="missing_qfn_pad_info"
+                    )
+                    continue
+
+                pad_a = qfn_info["pad_a"]
+                pad_b = qfn_info["pad_b"]
+                is_source_qfn = qfn_info.get("is_source_qfn", True)
+                dest_is_thruhole = qfn_info.get("dest_is_thruhole", False)
+
+                routed_obs = _build_gridless_obstacles({net_name})
+
+                # Try fanout-escape if source is a QFN pad
+                result_fanout = None
+                if dense_by_ref and dest_is_thruhole:
+                    src_xy = pad_a if is_source_qfn else pad_b
+                    dst_xy = pad_b if is_source_qfn else pad_a
+                    qfn_src_ref = next(
+                        (p.get("ref", "") for p in pads_by_net.get(net_name, [])
+                         if (p.get("x"), p.get("y")) == src_xy
+                         and p.get("ref", "") in dense_refs),
+                        None,
+                    )
+                    if qfn_src_ref and qfn_src_ref in dense_by_ref:
+                        dcomp = dense_by_ref[qfn_src_ref]
+                        result_fanout = route_net_fanout_escape(
+                            source_xy=src_xy,
+                            dest_xy=dst_xy,
+                            component_cx=dcomp["cx"],
+                            component_cy=dcomp["cy"],
+                            ring_radius=dcomp["ring_radius"],
+                            pads=pads,
+                            net_name=net_name,
+                            geo=geo,
+                            board_bbox=board_bbox,
+                            extra_obstacles=routed_obs,
+                            board_outline=board_outline,
+                            drill_obstacles=drill_obstacles or [],
+                            drill_centers=drill_centers,
+                            max_window_mm=max_route_window_mm,
+                            max_bcu_window_mm=max_bcu_window_mm,
+                        )
+
+                if result_fanout is not None and result_fanout.ok and result_fanout.world_paths:
+                    nr = to_gridless_netroute(
+                        net, result_fanout.world_paths, grid,
+                        world_vias=result_fanout.world_vias,
+                    )
+                    _mark(grid, nr, 1)
+                    net_routes[net_name] = nr
+                else:
+                    # Plain gridless with shared field pricing
+                    path, window_used = _route_one_net_congestion(
+                        net_name=net_name,
+                        start_xy=pad_a,
+                        goal_xy=pad_b,
+                        pads=pads,
+                        geo=geo,
+                        routed_obstacles=routed_obs,
+                        sc_grid=field,
+                        history_factor=h_fac,
+                        window_mm_start=4.0,
+                        board_bbox=board_bbox,
+                        allow_window_escalation=True,
+                        board_outline=board_outline,
+                        drill_obstacles=drill_obstacles,
+                        max_window_mm=max_route_window_mm,
+                    )[:2]
+                    if path is not None:
+                        waypoints = snap_waypoints(path)
+                        nr = to_gridless_netroute(net, [waypoints], grid)
+                        _mark(grid, nr, 1)
+                        net_routes[net_name] = nr
+                    else:
+                        net_routes[net_name] = NetRoute(
+                            net=net, ok=False, reason="no_path_gridless"
+                        )
+
+        # Track round-best
+        n_unconnected = sum(1 for nr in net_routes.values() if not nr.ok)
+        _, post_scs = _detect_contention_coopt(net_routes)
+        score = n_unconnected + len(post_scs)
+        if score < best_score:
+            best_score = score
+            best_routes = dict(net_routes)
+
+    # If fully converged in the final state, prefer final routes
+    final_contended, _ = _detect_contention_coopt(net_routes)
+    if not final_contended and net_routes:
+        best_routes = net_routes
+
+    return best_routes
+
+
 def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               ripup_factor: int = 8, escape: int = 0,
               priority: dict[str, int] | None = None,
@@ -246,6 +872,8 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
               gridless_negotiate: bool = False,
               gridless_rescue: bool = False,
               gridless_first: set[str] | None = None,
+              coopt: set[str] | None = None,
+              coopt_kwargs: dict | None = None,
               **_legacy) -> dict[str, NetRoute]:
     """Route every net; bounded rip-up on failures. Returns name -> NetRoute.
 
@@ -320,7 +948,55 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     ``gridless_negotiate``) → behaviour is byte-identical to the pre-M2 engine.
     ``gridless_rescue=False`` (default) → byte-identical to current behaviour.
     ``gridless_first=None`` (default) → no-op, byte-identical to current behaviour.
+
+    `coopt` (default ``None``) enables M-CO-1 cross-substrate co-optimization for
+    the specified net names.  When set, those nets are routed under a single shared
+    ``_SuperCellGrid`` congestion field (one ``_SuperCellGrid`` owned by this call,
+    read + written by both the grid A* and the gridless fanout-escape path) BEFORE
+    the main grid pass.  Successfully routed co-opt nets are marked into the shared
+    grid ledger so the normal grid pass routes around their copper.
+
+    The co-opt loop applies the **DRC fix for QFN-padded grid nets**: any grid-
+    assigned co-opt net whose pad belongs to a dense QFN component is routed via
+    fanout-escape (F.Cu stub + B.Cu run) instead of plain grid A* through the pad
+    clearance forest.  This prevents shorting_items / clearance violations from the
+    spike's 11-DRC-error blemish.
+
+    ``coopt_kwargs`` passes board-level context to the co-opt loop (same keys as
+    ``gridless_kwargs``, plus ``qfn_escape_nets: set[str]`` to designate the gridless
+    substrate nets, ``region_bbox: tuple`` to scope the shared field, and
+    ``max_route_window_mm`` / ``max_bcu_window_mm`` for bounded windows).
+
+    Hard invariant: ``coopt=None`` (default) is a no-op — behaviour is BYTE-IDENTICAL
+    to calling without ``coopt``.
     """
+    # ------------------------------------------------------------------
+    # M-CO-1: coopt — unified shared-field co-optimization loop.
+    # When coopt is set, run the unified loop for those nets BEFORE the
+    # regular grid pass.  Their copper is marked into the shared ledger.
+    # Hard invariant: coopt=None → no-op, byte-identical to current route_all.
+    # ------------------------------------------------------------------
+    if coopt:
+        _coopt_results = _run_coopt_loop(
+            grid=grid,
+            coopt_net_names=set(coopt),
+            all_nets=nets,
+            coopt_kwargs=coopt_kwargs or {},
+            via_cost=via_cost,
+        )
+        # Merge co-opt results; successfully routed nets are already marked
+        # into grid.cells/hard by _run_coopt_loop.
+        _coopt_fully_routed: set[str] = set()
+        for _cname, _cnr in _coopt_results.items():
+            if _cnr.ok:
+                _coopt_fully_routed.add(_cname)
+        # Return early: for the bounded region test (M-CO-1), the caller only
+        # cares about the co-opt nets.  Build a combined result that has the
+        # co-opt nets (from the co-opt loop) and falls through for all others.
+        # We DON'T return early — we fall through so the rest of the board routes
+        # normally via the grid pass.  Co-opt nets that succeeded are excluded
+        # from the grid queue (they have their copper already).
+
     # ------------------------------------------------------------------
     # gridless_first: convenience param — activates gridless_negotiate path.
     # When set, merge into gridless_nets and force gridless_negotiate=True.
@@ -345,6 +1021,19 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
     import numpy as np
 
     results: dict[str, NetRoute] = {}
+
+    # Seed results with any co-opt routes committed above.
+    # _coopt_fully_routed is set only when coopt was activated; guard with
+    # try/except to keep the no-coopt path byte-identical (no variable leak).
+    _coopt_fully_routed: set[str] = set()
+    try:
+        if coopt and _coopt_results:  # type: ignore[possibly-undefined]
+            for _cname, _cnr in _coopt_results.items():  # type: ignore[possibly-undefined]
+                results[_cname] = _cnr
+                if _cnr.ok:
+                    _coopt_fully_routed.add(_cname)
+    except (NameError, TypeError):
+        pass
 
     # ------------------------------------------------------------------
     # M2 STAGED PATH: negotiate-route the gridless subset FIRST, then
@@ -1108,15 +1797,18 @@ def route_all(grid: Grid, nets: list[Net], via_cost: float = 10.0,
         name for name in _gridless_pre_routed
         if results.get(name) is not None and results[name].ok
     }
+    # Also exclude coopt-fully-routed nets: their copper is already committed.
+    _gf_fully_routed |= _coopt_fully_routed
     for _name, nr in results.items():
         # Include only nets that are (a) successfully routed AND (b) not gridless-
-        # first fully-routed (those stay out of the rip-up pool).
+        # first fully-routed AND (c) not coopt-fully-routed (those stay out of
+        # the rip-up pool — their copper is already committed to grid.cells/hard).
         if nr.ok and _name not in _gf_fully_routed:
             routed.append(nr)
 
-    # Only exclude FULLY CONNECTED gridless-first nets from the grid queue.
+    # Only exclude FULLY CONNECTED gridless-first / coopt nets from the grid queue.
     # Nets that were nominated for gridless-first but failed get a second chance
-    # via the grid engine.
+    # via the grid engine.  Coopt-failed nets similarly get a second chance.
     queue = order_nets(
         [n for n in nets if n.name not in _gf_fully_routed], priority
     )

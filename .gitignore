@@ -16,3 +16,5 @@ runs/
 .spikeM3_tmp/
 .m2_gate_tmp/
 .probe_order_tmp/
+.mco1_measure_tmp/
+.spike_coopt_tmp/

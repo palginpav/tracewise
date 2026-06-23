@@ -435,7 +435,9 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                        gridless_nets: set[str] | None = None,
                        gridless_negotiate: bool = False,
                        gridless_rescue: bool = False,
-                       gridless_first: set[str] | None = None) -> dict:
+                       gridless_first: set[str] | None = None,
+                       coopt: set[str] | None = None,
+                       coopt_kwargs: dict | None = None) -> dict:
     """End-to-end: extract -> grid -> route -> emit. Returns a summary.
 
     `via_cost` is the A* penalty for a layer hop; lower it to make the router
@@ -491,7 +493,18 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     ledger, then the normal grid ``route_all`` runs for all remaining nets.
     Semantically equivalent to ``gridless_negotiate=True`` +
     ``gridless_nets=gridless_first`` but exposes a clean single-param interface.
-    ``gridless_first=None`` (default) is byte-identical to current behaviour."""
+    ``gridless_first=None`` (default) is byte-identical to current behaviour.
+
+    `coopt` (default ``None``) enables M-CO-1 cross-substrate co-optimization
+    for the specified net names.  Passed through to ``route_all``; see that
+    function's docstring for details.  ``coopt=None`` is byte-identical to
+    the current behaviour.
+
+    `coopt_kwargs` (default ``None``) passes board-level context to the co-opt
+    loop.  When ``coopt`` is set and ``coopt_kwargs`` is ``None``, a default
+    kwargs dict is built from the board's extracted geometry + ``qfn_escape_nets``
+    inferred from ``coopt`` (all nets present on a dense QFN component).
+    ``coopt=None`` → ``coopt_kwargs`` is ignored."""
     data = extract_pads(board)
     geo = project_geometry(board)
     grid, nets, anchors, obstacles, anchor_rects = build_problem(
@@ -512,6 +525,74 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
     # copper_edge_clearance and drill-clearance DRC violations.
     # Also built for gridless_rescue mode even when gridless_nets is None.
     # Also built for gridless_first mode even when gridless_nets is None.
+    # ------------------------------------------------------------------
+    # Coopt context: when coopt is set and coopt_kwargs is not provided,
+    # build a default kwargs dict from the board geometry.
+    # Hard invariant: coopt=None → _coopt_kwargs is None → route_all no-op.
+    # ------------------------------------------------------------------
+    _coopt_kwargs: dict | None = coopt_kwargs
+    if coopt and _coopt_kwargs is None:
+        from tracewise.route.gridless.geom import HAVE_SHAPELY
+        if HAVE_SHAPELY:
+            from tracewise.route.gridless.geom import (
+                detect_dense_components,
+                extract_board_outline,
+                extract_drill_centers,
+                extract_drill_obstacles,
+            )
+            bd = data["board"]
+            _coopt_board_bbox = (bd["x1"], bd["y1"], bd["x2"], bd["y2"])
+            _coopt_board_outline = extract_board_outline(board)
+            _coopt_drill_obs = extract_drill_obstacles(
+                board,
+                clearance_mm=geo["clearance_mm"],
+                track_mm=geo["track_mm"],
+            )
+            _coopt_drill_centers = extract_drill_centers(board)
+            # Infer QFN escape nets: coopt nets whose source pad is on a dense component
+            _coopt_dense_comps = detect_dense_components(data["pads"])
+            _coopt_dense_refs = {d["ref"] for d in _coopt_dense_comps}
+            _pads_by_net_co: dict[str, list[dict]] = {}
+            for _p in data["pads"]:
+                _pads_by_net_co.setdefault(_p.get("net", ""), []).append(_p)
+            _coopt_qfn_nets: set[str] = set()
+            for _cnet_name in coopt:
+                _cp = _pads_by_net_co.get(_cnet_name, [])
+                if any(
+                    p.get("ref", "") in _coopt_dense_refs
+                    and p.get("front") and not p.get("back")
+                    for p in _cp
+                ):
+                    _coopt_qfn_nets.add(_cnet_name)
+            # Build region bbox: QFN pad bbox + 6mm margin
+            _coopt_qfn_pads = [
+                p for p in data["pads"]
+                if p.get("ref", "") in _coopt_dense_refs
+            ]
+            if _coopt_qfn_pads:
+                _cxs = [p["x"] for p in _coopt_qfn_pads]
+                _cys = [p["y"] for p in _coopt_qfn_pads]
+                _margin = 6.0
+                _coopt_region = (
+                    min(_cxs) - _margin, min(_cys) - _margin,
+                    max(_cxs) + _margin, max(_cys) + _margin,
+                )
+            else:
+                _coopt_region = _coopt_board_bbox
+            _coopt_kwargs = {
+                "pads": data["pads"],
+                "geo": geo,
+                "board_bbox": _coopt_board_bbox,
+                "anchors": anchors,
+                "board_outline": _coopt_board_outline,
+                "drill_obstacles": _coopt_drill_obs,
+                "drill_centers": _coopt_drill_centers,
+                "qfn_escape_nets": _coopt_qfn_nets,
+                "region_bbox": _coopt_region,
+                "max_route_window_mm": 25.0,
+                "max_bcu_window_mm": 8.0,
+            }
+
     gridless_kwargs: dict | None = None
     if gridless_nets or gridless_rescue or gridless_first:
         from tracewise.route.gridless.geom import HAVE_SHAPELY
@@ -580,7 +661,9 @@ def route_board_engine(board: str | Path, pitch: float = 0.1,
                             gridless_kwargs=gridless_kwargs,
                             gridless_negotiate=gridless_negotiate,
                             gridless_rescue=gridless_rescue,
-                            gridless_first=gridless_first)
+                            gridless_first=gridless_first,
+                            coopt=coopt,
+                            coopt_kwargs=_coopt_kwargs)
     emitted = emit_routes(board, grid, results, track_mm=geo["track_mm"],
                           via_mm=geo["via_mm"], via_drill_mm=geo["via_drill_mm"],
                           anchors=anchors, neck_mm=geo["min_track_mm"],

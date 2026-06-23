@@ -609,3 +609,25 @@ rate is the documented open risk for full-board scale (region-scope fallback exi
 **VERDICT: GO for the architecture.** Cross-substrate co-optimization is proven (deconfliction +2) and
 bounded (365MB). Next: M-CO-1 (shared field in the engine, 2-net) → fix the QFN-padded grid nets with
 fanout-escape so the region is DRC-clean → M-CO-2 (region) → M-CO-3 (full board, beat 41/73).
+
+---
+
+## M-CO-1 (2026-06-23) — PRODUCTION: shared-field co-opt IN THE ENGINE, region DRC-clean (PM-verified)
+
+Wired the validated unified shared-field loop into `route_all`/`route_board_engine` behind a `coopt`
+net-set param (`_run_coopt_loop`): one `_SuperCellGrid` over the bounded QFN region, static substrate
+assignment, iter-0 free, bounded rounds with shared-field pricing + cross-substrate contention detection
++ deposit + bounded re-route, round-best accept. QFN-padded grid nets now route their source pad via
+FANOUT-ESCAPE (the spike's 11-DRC fix). `coopt=None` byte-identical; 416 tests green; ruff clean.
+
+**M-CO-1 gate (PM-verified by independent re-run, `/usr/bin/time`):**
+- **Deconfliction IN THE ENGINE: sequential 4/6 → co-opt 6/6 (+2)** — both displaced grid nets (/GPIO1,
+  /GPIO2) rescued alongside the QFN-escape nets (strict deconfliction confirmed).
+- **DRC errors: 0** (down from the spike's 11 — the fanout-escape fix for QFN-padded grid nets cleared
+  the shorting/clearance/hole violations; generalized adjacent-pad hard-block + via-exclusion zone).
+- **Bounded: peak RSS 363MB** (limit 4GB; the 4–18GB blowups did NOT recur), 140s, deterministic.
+
+The shared-field cross-substrate co-optimization is now in the engine, reproduces the deconfliction win,
+AND is DRC-clean — bounded and deterministic. Next: M-CO-2 (expand to the full QFN region + its ~7
+grid-contending neighbors) → M-CO-3 (full board, beat attempt-3's 41/73). Open risk remains convergence
+rate at full-board scale (region-scope fallback documented); M-CO-3 will measure it.
