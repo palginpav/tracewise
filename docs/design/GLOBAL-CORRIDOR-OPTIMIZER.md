@@ -471,3 +471,36 @@ frontier halves (connectivity-40 of `escape` + errors-65 of `ring_slots`) into o
   structured result `gco_spike_developer_tasks`.
 - [ ] **AC11 — no production code in the design.** Only illustrative signatures/pseudo-code.
   Evidence: no runnable function bodies.
+
+---
+
+## GCO-spike (2026-06-24) — flow MATH validated; realization broke it; NO-GO (the persistent wall)
+
+`scripts/_probe_gco_spike.py` (PM-verified; probe-only, suite 424 green, ruff clean).
+
+**Flow phase: SUCCESS (the core hypothesis is mathematically validated).** `min_cost_flow` found a
+DISJOINT corridor assignment (+3V3 spine band lanes 1-2, +1V1 lane 3, /GPIO20 lane 0, /RUN lane 4,
+/GPIO23 lane 5) in **0.002s** (107 nodes, 417 edges), bounded (664MB). Simultaneous allocation CAN seat
+the spine + signal lanes disjointly — exactly what no sequential order did.
+
+**Realization phase: BROKE IT → NO-GO.** Result: unc=38 (better than 41!) / **err=104** (vs 73) / **4
+shorts** / 0 crossings. 2 of 3 J4 signals (/RUN, /GPIO20) failed `bcu_run_failed` — the Phase-0 power
+routing had ALREADY placed copper in the lane-y bands the flow assigned them, so `route_net_steered`
+couldn't reach the assigned lane. Two fixable gaps: (a) the flow assigns lanes in an idealized model
+BEFORE Phase-0 power copper exists → must derive lane_y AFTER power placement (or model power copper in
+the flow); (b) the J4-only contending filter caught just 3 signals (the J3 corridor nets were excluded).
+
+**THE PERSISTENT WALL (across all ~24 iterations — the decisive lesson):** whether the assignment is
+sequential (escape/ring_slots/power-first) or simultaneous-on-paper (GCO flow), the per-net GEOMETRIC
+REALIZATION in the dense shared corridor keeps breaking — a net can't always reach its assigned lane
+when other copper is present, and the fallback produces shorts/errors OR the net fails (unc). The
+assignment computes cleanly every time; the REALIZER (place one net at a time into an exact lane) lacks
+the mutual geometric awareness to honor all assignments simultaneously. The human routes all corridor
+nets together with full concurrent geometric awareness — that is the gap, and it is a CONCURRENT
+DETAILED ROUTER for the corridor (route all assigned nets' geometry simultaneously, not one-at-a-time),
+a much larger undertaking that keeps hitting this same realization wall.
+
+**5th frontier point: GCO = 38/104.** Frontier: power-first 30/113 | GCO 38/104 | escape 40/79 |
+attempt-3 41/73 | ring_slots 46/65. Still NONE dominates attempt-3. **attempt-3 (commit 9ae76ea, 41/73)
+REMAINS THE DEFINITIVE BEST.** The GCO flow infrastructure (min-cost corridor allocation, validated +
+bounded) is committed for a future concurrent realizer.
