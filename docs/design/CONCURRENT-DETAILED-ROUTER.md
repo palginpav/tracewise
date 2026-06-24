@@ -560,3 +560,35 @@ hit.**
   spike spec "do NOT reuse".
 - [ ] **AC11 — no production code in the design.** Only illustrative signatures/pseudo-code.
   Evidence: no runnable function bodies.
+
+---
+
+## CDR-spike (2026-06-24) — THESIS CONFIRMED (bcu_run_failed eliminated) but spike regressed via B.Cu-jog bug
+
+`scripts/_probe_cdr_spike.py` (PM-verified; probe-only, suite 424 green, ruff clean).
+
+**THE THESIS IS CONFIRMED — concurrent realization breaks the per-net wall:**
+- **bcu_run_failed ELIMINATED (0 occurrences)** — no net failed to reach its track. The wall that capped
+  all 5 prior approaches is genuinely broken by computing all track-y's jointly + direct emission.
+- Disjoint assignment passed; 0 illegal different-net crossings in the audit; channel solve 0.006s
+  (107-node graph, 0 VCG cycles — mitayi is monotone); bounded (667MB peak).
+
+**BUT the spike REGRESSED (44 unc / 159 err / 20 shorts) due to an IMPLEMENTATION bug, not the thesis:**
+the spike routed the vertical jogs (via_y→track_y) on **B.Cu**, but the design §1 mandates **F.Cu jogs**
+(B.Cu = horizontal tracks only). Adjacent ring-slot jogs at near-identical x-columns (/GPIO6 x=153.289,
+/GPIO14 x=153.370 — 0.081mm apart, << the 0.45mm needed) overlap → 15-22 shorts. The agent correctly
+diagnosed: "This spike used B.Cu for the jog, which is the architectural mistake."
+
+**Verdict: NO-GO (regression), but the concurrent thesis HELD.** The fix per the design: jogs on F.Cu
+(2-via-per-net, with ring-slot assignment reserving jog-safe columns). That is another iteration with
+more geometric machinery (jog-safe column reservation), and the honest open risk persists: even with the
+corridor short-free, the NON-corridor nets inherit attempt-3's error profile, so CDR may TIE not dominate.
+
+**6th experiment, still no clean win. attempt-3 (commit 9ae76ea, 41/73) REMAINS THE DEFINITIVE BEST.**
+PATTERN (honest, decisive): each architecture validates its CORE mechanism (escape nudge, ring-slot
+legality, GCO disjoint flow, CDR concurrent emission) but each spike reveals the NEXT geometric
+realization subtlety (lane crossing → via legality → corridor ordering → flow-vs-placement order →
+B.Cu-jog overlap). We are in the long tail of matching a human full-board 0/0; marginal iterations
+produce frontier/regression points + successive geometric details, not convergence to a clean win. The
+CDR concurrent-channel infrastructure (constraint graphs, direct emission, validated bcu_run_failed
+elimination) is committed for a future complete implementation (F.Cu jogs + jog-safe columns).
