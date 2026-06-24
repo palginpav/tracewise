@@ -541,3 +541,37 @@ ring_slots' error win (65, 0 shorts) could combine with escape's connectivity (4
 on BOTH axes. (Honest caveat: this is another Pareto-frontier micro-iteration; the fundamental 40→0 gap
 is the human's global co-optimization our staged architecture approximates but doesn't match.)
 attempt-3 (41/73) remains best-overall; ring-slot assignment is committed infrastructure (default-off).
+
+---
+
+## +3V3-ordering micro-fix (2026-06-24) — recovers connectivity to 30 but errors blow up; the Pareto frontier is now decisively mapped
+
+Routed +3V3 (corridor power net) FIRST, before the /RUN,/SWCLK ring-slot vias. PM-verified
+(only the probe changed; suite 424 green; ruff clean). Result: **30 unconnected / 113 errors / 5 shorts.**
+
+**+3V3 recovery is dramatic** (its blocked-count 30→2; total unc 46→30 — the BEST connectivity of the
+entire arc, far below attempt-3's 41). BUT routing +3V3 first (single-layer F.Cu) consumes the B.Cu
+corridor the escape nets need → 4 escape nets (/RUN,/GPIO20,/SWCLK,/GPIO9) fail their B.Cu runs →
+errors 65→113, 5 shorts, 8 crossings. Still a Pareto trade — shifted hard toward connectivity.
+
+**The Pareto frontier is now decisively mapped (4 reordering experiments):**
+| config | unconnected | errors | character |
+|---|---|---|---|
+| ring_slots + power-first | **30** | 113 | connectivity-extreme |
+| escape (illegal-fallback vias) | 40 | 79 | connectivity, dirty |
+| **attempt-3 (gridless-first negotiate)** | **41** | **73** | **BEST BALANCED** |
+| ring_slots (legal vias) | 46 | 65 | error-extreme |
+
+Every reordering picks a different winner of the SHARED J4 corridor (+3V3 vs the escape nets); NONE
+dominates attempt-3 on both axes. The human's 0/0 dominates ALL of them.
+
+**DECISIVE ARCHITECTURAL CONCLUSION:** the 41→0 gap is GLOBAL CORRIDOR CO-OPTIMIZATION — the human
+routes +3V3 AND the escape nets through the shared corridor SIMULTANEOUSLY (true multi-net global
+optimization), while our STAGED/sequential router can only pick an order, and every order trades one
+axis for another. We have mapped the frontier (30/113 ↔ 46/65) thoroughly; closing it to a clean
+sub-41 win requires a SIMULTANEOUS global optimizer over the contended corridor (e.g. concurrent
+multi-net B.Cu lane+layer assignment for +3V3 AND the escape nets together), NOT another sequential
+reordering — a major architectural chapter (and the cross-substrate co-opt M-CO chapter already showed
+shared-field negotiation is hard to scale). **attempt-3 (commit 9ae76ea, 41/73) REMAINS THE DEFINITIVE
+BEST BALANCED RESULT.** The ring-slot assignment + topo machinery are committed infrastructure for a
+future global-corridor optimizer.

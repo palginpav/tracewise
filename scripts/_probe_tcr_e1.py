@@ -620,6 +620,98 @@ def run_e1(
     steering_total = 0
     failed_escape: list = []
 
+    # ── Phase 0: power-first pre-routing (ring_slots mode only) ──────────────
+    # ROOT CAUSE FIX: in ring_slots mode the /RUN,/SWCLK legal vias sit in the
+    # active J4 corridor.  If they are placed first (escape phase), +3V3 (a 29-pin
+    # net) cannot claim J4-corridor copper later → ~30 ratsnest gaps → unc 40→46.
+    # Fix: route corridor power/multi-pin nets FIRST (clean board, only pads as
+    # obstacles) so they claim J4 copper before any escape via is committed.
+    # The escape nets then route AROUND the power copper.
+    #
+    # This phase is a no-op for mode != "ring_slots" (gf_only / escape unchanged).
+    # +3V3 (29 pads) is the primary net blocked by the J4-corridor escape vias.
+    # +1V1 (5 pads) is small and may also run through the corridor.
+    # GND is a zone-fill net (59 pads) — intentionally excluded: it is handled
+    # by copper pours (refill_zones), not trace routing, and routing 59-pin MST
+    # via gridless would be extremely slow and incorrect for a pour net.
+    CORRIDOR_POWER_NETS = {"+3V3", "+1V1"}  # corridor trace-routed power nets
+    t_power_start = time.perf_counter()
+    if mode == "ring_slots":
+        _power_net_objs = [n for n in nets if n.name in CORRIDOR_POWER_NETS]
+        if _power_net_objs:
+            print(
+                f"\n  [phase0] Power-first pre-routing: {[n.name for n in _power_net_objs]}",
+                flush=True,
+            )
+            _check_rss("phase0_power_start")
+            _power_gridless_kwargs = {
+                "pads": pads,
+                "geo": geo,
+                "board_bbox": board_bbox,
+                "anchors": anchors,
+                "extra_gridless_obstacles": [],  # clean board — only pads as obstacles
+                "board_outline": board_outline,
+                "drill_obstacles": drill_obstacles,
+                "drill_centers": drill_centers,
+                "negotiate_max_classify_window_mm": 25.0,
+                "negotiate_max_route_window_mm": 25.0,
+                "negotiate_ripup_factor": 2,
+            }
+            _power_gf_names = {n.name for n in _power_net_objs}
+            _power_results = route_all(
+                grid,
+                _power_net_objs,
+                escape=12,
+                ripup_factor=8,
+                via_cost=10.0,
+                history_factor=1.0,
+                allow_partial=True,
+                gridless_first=_power_gf_names,
+                gridless_kwargs=_power_gridless_kwargs,
+            )
+            _check_rss("phase0_power_done")
+            # Absorb successful power routes into precomp_routes + Shapely obstacles
+            _power_ok_count = 0
+            for _pnet_name, _pnr in _power_results.items():
+                if _pnr.ok:
+                    precomp_routes[_pnet_name] = _pnr
+                    _power_ok_count += 1
+                    # Accumulate Shapely obstacles from power copper for escape nets
+                    if _have_shapely:
+                        try:
+                            from shapely.geometry import LineString as _PLS
+                            from shapely.geometry import Point as _PPt
+                            from tracewise.route.gridless.geom import snap as _psnap
+                            _p_inflate = geo["track_mm"] / 2.0 + geo["clearance_mm"]
+                            _p_via_inflate = (geo["via_mm"] / 2.0 + geo["clearance_mm"]
+                                              + geo["track_mm"] / 2.0)
+                            if hasattr(_pnr, "world_paths"):
+                                for _wp in _pnr.world_paths:
+                                    if len(_wp) >= 2:
+                                        _pts2d = [(_w[0], _w[1]) for _w in _wp]
+                                        try:
+                                            bcu_extra_obs.append(
+                                                _psnap(_PLS(_pts2d).buffer(_p_inflate, cap_style=2))
+                                            )
+                                        except Exception:  # noqa: BLE001
+                                            pass
+                            if hasattr(_pnr, "world_vias"):
+                                for _pvx, _pvy in (_pnr.world_vias or []):
+                                    try:
+                                        bcu_extra_obs.append(
+                                            _psnap(_PPt(_pvx, _pvy).buffer(_p_via_inflate, resolution=16))
+                                        )
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                        except Exception:  # noqa: BLE001
+                            pass
+            t_power = time.perf_counter() - t_power_start
+            print(
+                f"  [phase0] Power-first done: {_power_ok_count}/{len(_power_net_objs)} ok "
+                f"in {t_power:.1f}s (precomp_routes now has {len(precomp_routes)} nets)",
+                flush=True,
+            )
+
     t_escape_start = time.perf_counter()
 
     if mode == "gf_only":
@@ -897,6 +989,16 @@ def run_e1(
     # ── Crossing audit ────────────────────────────────────────────────────────
     crossings = audit_crossings(board)
 
+    # ── +3V3 unconnected count ────────────────────────────────────────────────
+    # Count how many unconnected ratsnest items belong to the +3V3 net.
+    # Was ~30 in ring_slots (unc 40→46); should recover to ~0 with power-first.
+    plus3v3_unc = sum(
+        1 for item in report.get("unconnected_items", [])
+        if (item.get("net", "") == "+3V3"
+            or "+3V3" in str(item.get("net_name", ""))
+            or "+3V3" in str(item.get("items", "")))
+    )
+
     return {
         "board": str(board),
         "unconnected": unc,
@@ -912,6 +1014,7 @@ def run_e1(
         "t_escape_s": round(t_escape, 1),
         "t_grid_s": round(t_grid, 1),
         "rss_gb": round(_rss_gb(), 3),
+        "plus3v3_unconnected": plus3v3_unc,
     }
 
 
@@ -1159,7 +1262,7 @@ def main() -> None:
         ),
         "files_changed": [
             "src/tracewise/route/gridless/topo_assign.py (new — ring-slot assignment Steps A-C)",
-            "scripts/_probe_tcr_e1.py (added ring_slots mode)",
+            "scripts/_probe_tcr_e1.py (added ring_slots mode + phase0 power-first ordering)",
             "tests/test_topo_assign.py (new unit tests)",
         ],
         "files_read": [
@@ -1192,6 +1295,9 @@ def main() -> None:
             "by_type": dict(by_type_best),
         },
         "shorting_items": shorting_items,
+        "plus3v3_unconnected": best.get("plus3v3_unconnected", -1),
+        "power_first_ordering_added": (args.mode == "ring_slots"),
+        "corridor_power_nets_routed_first": ["+3V3", "+1V1"],
         "escape_nets_realized": best.get("escape_nets_ok", 0),
         "illegal_crossings": {"fcu": fcu_x, "bcu": bcu_x},
         "unconnected_vs_attempt3": (
@@ -1212,6 +1318,7 @@ def main() -> None:
         "issues": best.get("failed_escape_nets", []),
         "assumptions": [
             f"mode={args.mode}",
+            "ring_slots: phase0 power-first routes +3V3/+1V1 BEFORE escape nets (GND is zone-fill, excluded)",
             "ring_slots: legal via slots generated in 4.5-8mm band from U3",
             "escape_via_xy = legal assigned slot (ring_slots) or witness via (escape)",
             "lane_y_mm = None in ring_slots (B.Cu routes freely, no lane constraint)",
