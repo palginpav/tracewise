@@ -35,10 +35,12 @@ for fp in b.GetFootprints():
         front = ls.Contains(pcbnew.F_Cu)
         back = ls.Contains(pcbnew.B_Cu)
         bb = p.GetBoundingBox()
+        bbc = bb.GetCenter()
         pads.append({{
             "ref": fp.GetReference(),
             "net": p.GetNetname(),
             "x": p.GetPosition().x / IU, "y": p.GetPosition().y / IU,
+            "bbc_x": bbc.x / IU, "bbc_y": bbc.y / IU,
             "front": bool(front), "back": bool(back),
             "hw": bb.GetWidth() / 2 / IU, "hh": bb.GetHeight() / 2 / IU,
         }})
@@ -125,7 +127,16 @@ def build_problem(
     anchor_rects: dict[tuple[int, int, int], tuple[float, float, float, float]] = {}
     for p in data["pads"]:
         layers = ([0] if p["front"] else []) + ([1] if p["back"] else [])
-        rect = (p["x"] - p["hw"], p["y"] - p["hh"], p["x"] + p["hw"], p["y"] + p["hh"])
+        # Use bounding-box center (bbc_x/bbc_y) for the obstacle rectangle when
+        # available.  For normal pads bbc == position; for castellated/hybrid pads
+        # (e.g. Raspberry Pi Pico SMD extensions) the bb is offset from the nominal
+        # pad position — using position would leave a gap of unblocked copper that
+        # the router treats as free space, causing tracks routed through that gap to
+        # physically overlap the pad copper (root cause of ~30 shorting_items on
+        # ZuluSCSI and ~3 on RP2040 in B3).
+        cx = p.get("bbc_x", p["x"])
+        cy = p.get("bbc_y", p["y"])
+        rect = (cx - p["hw"], cy - p["hh"], cx + p["hw"], cy + p["hh"])
         for layer in layers:
             if p["net"]:
                 cell = grid.clamp_cell(*grid.to_cell(p["x"], p["y"]))

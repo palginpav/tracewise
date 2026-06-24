@@ -38,3 +38,31 @@ axis — especially the routing-introduced shorting_items (zuluscsi 40!) and hol
 DIFFERENT, likely-tractable opportunity that was never targeted (the whole arc chased mitayi
 connectivity). B4: decompose errors board-inherent vs routing-introduced, then attack the
 routing-introduced shorts + hole_clearance, measuring error reduction with NO connectivity regression.
+
+---
+
+## B4 RESULT (2026-06-24) — castellated-pad obstacle fix: −132 errors across boards (PM-verified)
+
+ROOT CAUSE (diagnosed): castellated/hybrid Pico-module pads (zuluscsi U1, rp2040 U201) have their copper
+bounding-box CENTER offset ~0.9mm from `pcbnew GetPosition()` (the drill center). `build_problem` blocked
+the obstacle rect at GetPosition → left ~0.9mm of REAL copper unblocked → the grid router routed tracks
+THROUGH actual copper → `shorting_items`. FIX: `PAD_SCRIPT` exports `bb.GetCenter()`; `build_problem`
+uses bb_center for the obstacle rect (fallback to position for normal pads → normal boards unchanged).
+
+**PM-verified A/B (independent re-route, vs B3 baseline):**
+| board | B3 (before) | B4 (after) | Δerr | connectivity |
+|---|---|---|---|---|
+| zuluscsi | 15 / 149 | **13 / 40** | **−109** | 15→13 (improved) |
+| rp2040 | 33 / 152 | 31 / 128 | −24 | 33→31 (improved) |
+| mitayi | 48 / 88 | 48 / 89 | +1 (noise; no castellated pads) | unchanged |
+zuluscsi shorting_items 40→1, solder_mask_bridge 41→0. Total errors 389→257 (**−132**). **NO connectivity
+regression on any board.** Suite 424 green, ruff clean, bounded (536MB).
+
+This is the best routing-quality improvement of the whole arc AND it's GENERAL (a DEFAULT grid-router fix
+helping any board with Pico-module castellated pads — not a mitayi-only opt-in). The error-axis (B4) was
+far more tractable than the mitayi connectivity tail: a single principled obstacle-model fix cleared most
+of the routing-introduced shorts. (Rejected Fix-2 via-at-goal-cell hard-check: regressed mitayi 88→121 /
+15 nets fail — needs escape-before-via architecture; correctly deferred.)
+
+Residual routing-introduced opportunities: rp2040 16 shorting_items + 20 hole_clearance (via-at-goal-cell
+on QFN pads — the deferred Fix-2 territory); mitayi 32 hole_clearance; clearance (mitayi 27, zuluscsi 12).
